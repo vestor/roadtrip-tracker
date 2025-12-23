@@ -1,0 +1,867 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Road Trip Tracker</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=DM+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css" />
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+    <script src="/socket.io/socket.io.js"></script>
+    <style>
+        :root {
+            --bg-dark: #0f0f0f;
+            --bg-card: #1a1a1a;
+            --accent-orange: #ff6b35;
+            --accent-gold: #f7c948;
+            --accent-teal: #2dd4bf;
+            --accent-blue: #3b82f6;
+            --accent-purple: #a855f7;
+            --accent-pink: #ec4899;
+            --accent-green: #22c55e;
+            --accent-red: #ef4444;
+            --text-primary: #ffffff;
+            --text-secondary: #a1a1aa;
+            --text-muted: #52525b;
+        }
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: 'DM Sans', sans-serif;
+            background: var(--bg-dark);
+            color: var(--text-primary);
+            min-height: 100vh;
+        }
+        .login-container {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            min-height: 100vh;
+            padding: 20px;
+        }
+        .login-box {
+            background: var(--bg-card);
+            border-radius: 16px;
+            padding: 40px;
+            text-align: center;
+            max-width: 400px;
+            width: 100%;
+            border: 1px solid rgba(255,255,255,0.1);
+        }
+        .login-box h1 {
+            font-family: 'Bebas Neue', sans-serif;
+            font-size: 2.5rem;
+            background: linear-gradient(135deg, var(--accent-orange), var(--accent-gold));
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            margin-bottom: 10px;
+        }
+        .login-box p { color: var(--text-secondary); margin-bottom: 30px; }
+        .google-btn {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 12px;
+            background: white;
+            color: #333;
+            padding: 14px 24px;
+            border: none;
+            border-radius: 8px;
+            font-size: 1rem;
+            font-weight: 600;
+            cursor: pointer;
+            width: 100%;
+            transition: transform 0.2s ease;
+        }
+        .google-btn:hover { transform: translateY(-2px); }
+        .google-btn img { width: 20px; height: 20px; }
+        .pending-box {
+            background: rgba(251, 191, 36, 0.1);
+            border: 1px solid rgba(251, 191, 36, 0.3);
+            border-radius: 12px;
+            padding: 20px;
+            margin-top: 20px;
+        }
+        .pending-box h3 { color: #fbbf24; margin-bottom: 8px; }
+        .pending-box p { font-size: 0.9rem; }
+
+        /* Main App Styles */
+        .app-container { display: none; }
+        .header {
+            padding: 20px 30px;
+            background: linear-gradient(180deg, rgba(255, 107, 53, 0.1) 0%, transparent 100%);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: 15px;
+        }
+        .header-left h1 {
+            font-family: 'Bebas Neue', sans-serif;
+            font-size: 2rem;
+            background: linear-gradient(135deg, var(--accent-orange), var(--accent-gold));
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+        .header-left .subtitle { font-size: 0.85rem; color: var(--text-secondary); }
+        .header-right { display: flex; align-items: center; gap: 15px; }
+        .user-info {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 8px 16px;
+            background: rgba(255,255,255,0.05);
+            border-radius: 25px;
+        }
+        .user-avatar {
+            width: 32px;
+            height: 32px;
+            border-radius: 50%;
+            border: 2px solid var(--accent-orange);
+        }
+        .user-name { font-size: 0.9rem; }
+        .admin-link {
+            background: var(--accent-purple);
+            color: white;
+            padding: 8px 16px;
+            border-radius: 8px;
+            text-decoration: none;
+            font-size: 0.85rem;
+            font-weight: 600;
+        }
+        .logout-btn {
+            background: rgba(255,255,255,0.1);
+            border: none;
+            color: var(--text-secondary);
+            padding: 8px 16px;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 0.85rem;
+        }
+        .stats-bar {
+            display: flex;
+            justify-content: center;
+            gap: 30px;
+            padding: 20px;
+            background: var(--bg-card);
+            border-bottom: 1px solid rgba(255,255,255,0.05);
+            flex-wrap: wrap;
+        }
+        .stat { text-align: center; }
+        .stat-value {
+            font-family: 'Bebas Neue', sans-serif;
+            font-size: 1.8rem;
+            color: var(--accent-gold);
+        }
+        .stat-label { font-size: 0.7rem; color: var(--text-muted); text-transform: uppercase; }
+        .live-location-banner {
+            background: linear-gradient(135deg, rgba(34, 197, 94, 0.2), rgba(45, 212, 191, 0.1));
+            border: 1px solid rgba(34, 197, 94, 0.3);
+            padding: 12px 20px;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            justify-content: center;
+        }
+        .live-dot {
+            width: 10px;
+            height: 10px;
+            background: var(--accent-green);
+            border-radius: 50%;
+            animation: pulse 2s infinite;
+        }
+        @keyframes pulse {
+            0%, 100% { opacity: 1; transform: scale(1); }
+            50% { opacity: 0.5; transform: scale(1.2); }
+        }
+        .live-location-banner span { color: var(--accent-green); font-weight: 600; }
+        .live-location-banner small { color: var(--text-secondary); }
+        .current-leg-banner {
+            background: linear-gradient(135deg, rgba(168, 85, 247, 0.2), rgba(59, 130, 246, 0.1));
+            border: 1px solid rgba(168, 85, 247, 0.3);
+            padding: 12px 20px;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+        .leg-icon {
+            font-size: 1.5rem;
+            animation: bounce 2s infinite;
+        }
+        @keyframes bounce {
+            0%, 100% { transform: translateY(0); }
+            50% { transform: translateY(-5px); }
+        }
+        .leg-info { flex: 1; }
+        .leg-route {
+            color: var(--accent-purple);
+            font-weight: 600;
+            display: block;
+        }
+        .leg-info small { color: var(--text-secondary); }
+        .container {
+            display: grid;
+            grid-template-columns: 1fr 400px;
+            min-height: calc(100vh - 200px);
+        }
+        @media (max-width: 900px) {
+            .container { grid-template-columns: 1fr; }
+            .sidebar { order: -1; max-height: 50vh; overflow-y: auto; }
+        }
+        .map-section { position: relative; min-height: 500px; }
+        #map { width: 100%; height: 100%; min-height: 500px; }
+        .leaflet-container { background: #1a1a2e; }
+        .sidebar {
+            background: var(--bg-dark);
+            overflow-y: auto;
+            max-height: calc(100vh - 200px);
+        }
+        .tab-bar {
+            display: flex;
+            background: var(--bg-card);
+            border-bottom: 1px solid rgba(255,255,255,0.1);
+        }
+        .tab-btn {
+            flex: 1;
+            padding: 12px;
+            background: none;
+            border: none;
+            color: var(--text-secondary);
+            cursor: pointer;
+            font-weight: 600;
+            border-bottom: 2px solid transparent;
+            transition: all 0.2s ease;
+        }
+        .tab-btn.active {
+            color: var(--accent-orange);
+            border-bottom-color: var(--accent-orange);
+        }
+        .tab-content { display: none; padding: 15px; }
+        .tab-content.active { display: block; }
+        .day-card {
+            background: var(--bg-card);
+            border-radius: 12px;
+            padding: 15px;
+            margin-bottom: 10px;
+            border: 1px solid rgba(255,255,255,0.05);
+            cursor: pointer;
+            transition: all 0.2s ease;
+        }
+        .day-card:hover { border-color: rgba(255, 107, 53, 0.3); }
+        .day-card.active { border-color: var(--accent-orange); }
+        .day-card.workday { border-left: 3px solid var(--accent-purple); }
+        .day-card.holiday { background: linear-gradient(135deg, rgba(247, 201, 72, 0.08), transparent); }
+        .day-header { display: flex; justify-content: space-between; margin-bottom: 8px; }
+        .day-date .day-num {
+            font-family: 'Bebas Neue', sans-serif;
+            font-size: 1.5rem;
+            color: var(--accent-orange);
+        }
+        .day-date .day-name { font-size: 0.7rem; color: var(--text-muted); }
+        .badges { display: flex; gap: 5px; flex-wrap: wrap; }
+        .badge {
+            font-size: 0.6rem;
+            padding: 3px 8px;
+            border-radius: 10px;
+            font-weight: 600;
+        }
+        .badge.holiday { background: rgba(247, 201, 72, 0.2); color: var(--accent-gold); }
+        .badge.workday { background: rgba(168, 85, 247, 0.2); color: var(--accent-purple); }
+        .route-info { font-size: 0.9rem; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+        .route-arrow { color: var(--accent-orange); }
+        .route-stats { display: flex; gap: 10px; margin-left: auto; }
+        .route-stat { font-size: 0.75rem; color: var(--text-secondary); }
+        .note { font-size: 0.75rem; color: var(--accent-gold); margin-top: 8px; }
+        .photo-grid {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 10px;
+        }
+        .photo-card {
+            position: relative;
+            border-radius: 10px;
+            overflow: hidden;
+            aspect-ratio: 1;
+            cursor: pointer;
+        }
+        .photo-card img {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            transition: transform 0.3s ease;
+        }
+        .photo-card:hover img { transform: scale(1.05); }
+        .photo-caption {
+            position: absolute;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            background: linear-gradient(transparent, rgba(0,0,0,0.8));
+            padding: 20px 10px 10px;
+            font-size: 0.75rem;
+        }
+        .no-photos {
+            text-align: center;
+            padding: 40px;
+            color: var(--text-muted);
+        }
+        /* Photo Modal */
+        .modal-overlay {
+            position: fixed;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background: rgba(0,0,0,0.9);
+            z-index: 2000;
+            display: none;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+        }
+        .modal-overlay.active { display: flex; }
+        .photo-modal {
+            max-width: 90vw;
+            max-height: 90vh;
+            position: relative;
+        }
+        .photo-modal img {
+            max-width: 100%;
+            max-height: 85vh;
+            border-radius: 8px;
+        }
+        .photo-modal-caption {
+            position: absolute;
+            bottom: -40px;
+            left: 0;
+            right: 0;
+            text-align: center;
+            color: var(--text-secondary);
+        }
+        .modal-close {
+            position: absolute;
+            top: -40px;
+            right: 0;
+            background: none;
+            border: none;
+            color: white;
+            font-size: 2rem;
+            cursor: pointer;
+        }
+        .map-legend {
+            position: absolute;
+            bottom: 20px;
+            left: 15px;
+            background: rgba(15, 15, 15, 0.9);
+            padding: 10px 15px;
+            border-radius: 8px;
+            z-index: 1000;
+            font-size: 0.75rem;
+        }
+        .legend-item { display: flex; align-items: center; gap: 8px; margin-bottom: 5px; }
+        .legend-item:last-child { margin-bottom: 0; }
+        .legend-line { width: 20px; height: 3px; border-radius: 2px; }
+        .legend-line.coast { background: #0ea5e9; }
+        .legend-line.bhutan { background: #f97316; }
+        .legend-line.heartland { background: #a855f7; }
+        .legend-line.live { background: var(--accent-green); }
+    </style>
+</head>
+<body>
+    <!-- Login View -->
+    <div class="login-container" id="loginView">
+        <div class="login-box">
+            <h1>🏍️ Road Trip Tracker</h1>
+            <p>Follow the epic journey from Bengaluru to Bhutan and back!</p>
+            <button class="google-btn" onclick="window.location.href='/auth/google'">
+                <img src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg" alt="Google">
+                Sign in with Google
+            </button>
+            <div class="pending-box" id="pendingNotice" style="display:none">
+                <h3>⏳ Access Pending</h3>
+                <p>Your access is awaiting approval from the trip admin. Please check back later!</p>
+            </div>
+        </div>
+    </div>
+
+    <!-- Main App -->
+    <div class="app-container" id="appView">
+        <header class="header">
+            <div class="header-left">
+                <h1>🏍️ Road Trip 2025-26</h1>
+                <p class="subtitle">Bengaluru → Bhutan → Indore</p>
+            </div>
+            <div class="header-right">
+                <div class="user-info">
+                    <img class="user-avatar" id="userAvatar" src="" alt="Avatar">
+                    <span class="user-name" id="userName"></span>
+                </div>
+                <a href="/admin" class="admin-link" id="adminLink" style="display:none">⚙️ Admin</a>
+                <button class="logout-btn" onclick="window.location.href='/auth/logout'">Logout</button>
+            </div>
+        </header>
+
+        <div class="stats-bar">
+            <div class="stat">
+                <div class="stat-value" id="totalKm">—</div>
+                <div class="stat-label">Kilometers</div>
+            </div>
+            <div class="stat">
+                <div class="stat-value" id="totalDays">—</div>
+                <div class="stat-label">Days</div>
+            </div>
+            <div class="stat">
+                <div class="stat-value" id="totalPhotos">0</div>
+                <div class="stat-label">Photos</div>
+            </div>
+        </div>
+
+        <div class="live-location-banner" id="liveBanner" style="display:none">
+            <div class="live-dot"></div>
+            <span>📍 Live Location Active</span>
+            <small id="liveLocationText"></small>
+        </div>
+
+        <div class="current-leg-banner" id="currentLegBanner" style="display:none">
+            <div class="leg-icon">🏍️</div>
+            <div class="leg-info">
+                <span class="leg-route" id="legRoute"></span>
+                <small id="legDetails"></small>
+            </div>
+        </div>
+
+        <div class="container">
+            <section class="map-section">
+                <div id="map"></div>
+                <div class="map-legend">
+                    <div class="legend-item"><div class="legend-line coast"></div> East Coast</div>
+                    <div class="legend-item"><div class="legend-line bhutan"></div> Bhutan</div>
+                    <div class="legend-item"><div class="legend-line heartland"></div> Heartland</div>
+                    <div class="legend-item"><div class="legend-line live"></div> Live Location</div>
+                </div>
+            </section>
+
+            <aside class="sidebar">
+                <div class="tab-bar">
+                    <button class="tab-btn active" data-tab="itinerary">📍 Itinerary</button>
+                    <button class="tab-btn" data-tab="photos">📷 Photos</button>
+                </div>
+                
+                <div class="tab-content active" id="itinerary-tab"></div>
+                <div class="tab-content" id="photos-tab"></div>
+            </aside>
+        </div>
+    </div>
+
+    <!-- Photo Modal -->
+    <div class="modal-overlay" id="photoModal">
+        <div class="photo-modal">
+            <button class="modal-close" onclick="closePhotoModal()">×</button>
+            <img id="modalPhoto" src="" alt="">
+            <p class="photo-modal-caption" id="modalCaption"></p>
+        </div>
+    </div>
+
+    <script>
+        const socket = io();
+        let map, liveMarker, stops = [], photos = [], currentUser = null;
+        let cachedRoutes = [], liveRoute = null;
+        const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+        const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+        // Request notification permission on load
+        async function requestNotificationPermission() {
+            if ('Notification' in window && Notification.permission === 'default') {
+                await Notification.requestPermission();
+            }
+        }
+
+        function showNotification(title, options) {
+            if ('Notification' in window && Notification.permission === 'granted') {
+                new Notification(title, options);
+            }
+        }
+
+        // Check auth status
+        async function checkAuth() {
+            try {
+                const res = await fetch('/auth/me');
+                const data = await res.json();
+                
+                if (data.user) {
+                    currentUser = data.user;
+                    if (data.user.role === 'pending') {
+                        document.getElementById('pendingNotice').style.display = 'block';
+                    } else {
+                        showApp();
+                    }
+                }
+            } catch (err) {
+                console.error('Auth check failed:', err);
+            }
+        }
+
+        function showApp() {
+            document.getElementById('loginView').style.display = 'none';
+            document.getElementById('appView').style.display = 'block';
+            
+            document.getElementById('userName').textContent = currentUser.name;
+            document.getElementById('userAvatar').src = currentUser.picture || '';
+            
+            if (currentUser.role === 'admin') {
+                document.getElementById('adminLink').style.display = 'inline-block';
+            }
+
+            initMap();
+            loadData();
+            setupTabs();
+            setupSocketListeners();
+            requestNotificationPermission();
+        }
+
+        function initMap() {
+            map = L.map('map').setView([23.5, 85], 5);
+            L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+                attribution: '© OSM © CARTO',
+                maxZoom: 19
+            }).addTo(map);
+        }
+
+        async function loadRoutes() {
+            try {
+                const [routesRes, liveRouteRes] = await Promise.all([
+                    fetch('/api/routes'),
+                    fetch('/api/routes/live')
+                ]);
+                cachedRoutes = await routesRes.json();
+                liveRoute = await liveRouteRes.json();
+            } catch (err) {
+                console.error('Failed to load routes:', err);
+                cachedRoutes = [];
+                liveRoute = null;
+            }
+        }
+
+        async function loadData() {
+            try {
+                const [stopsRes, photosRes, locRes] = await Promise.all([
+                    fetch('/api/stops'),
+                    fetch('/api/photos'),
+                    fetch('/api/location')
+                ]);
+
+                stops = await stopsRes.json();
+                photos = await photosRes.json();
+                const liveLocation = await locRes.json();
+
+                await loadRoutes();
+
+                renderItinerary();
+                renderPhotos();
+                renderMap();
+                updateStats();
+                
+                if (liveLocation.lat && liveLocation.lng) {
+                    updateLiveLocation(liveLocation);
+                }
+            } catch (err) {
+                console.error('Failed to load data:', err);
+            }
+        }
+
+        function renderItinerary() {
+            const container = document.getElementById('itinerary-tab');
+            container.innerHTML = '';
+
+            stops.forEach((stop, index) => {
+                const date = new Date(stop.date + 'T00:00:00');
+                const dayName = DAYS[date.getDay()];
+                const monthName = MONTHS[date.getMonth()];
+                const dateNum = date.getDate();
+
+                let dateDisplay = dateNum;
+                if (stop.nights > 0) {
+                    const endDate = new Date(date);
+                    endDate.setDate(endDate.getDate() + stop.nights);
+                    dateDisplay = `${dateNum}-${endDate.getDate()}`;
+                }
+
+                // Calculate distance from previous stop
+                let distanceKm = 0;
+                if (index > 0) {
+                    const prev = stops[index - 1];
+                    distanceKm = Math.round(haversineDistance(prev.lat, prev.lng, stop.lat, stop.lng));
+                }
+
+                const card = document.createElement('div');
+                card.className = `day-card ${stop.type}`;
+                card.innerHTML = `
+                    <div class="day-header">
+                        <div class="day-date">
+                            <span class="day-num">${String(dateDisplay).padStart(2, '0')}</span>
+                            <span class="day-name">${dayName} · ${monthName}</span>
+                        </div>
+                        <div class="badges">
+                            ${stop.type === 'holiday' ? '<span class="badge holiday">🎉 Holiday</span>' : ''}
+                            ${stop.type === 'workday' ? '<span class="badge workday">💼 Work</span>' : ''}
+                        </div>
+                    </div>
+                    <div class="route-info">
+                        ${index > 0 ? `<span>${stops[index-1].city}</span><span class="route-arrow">→</span>` : ''}
+                        <strong>${stop.city}</strong>
+                        ${index > 0 ? `<div class="route-stats"><span class="route-stat">📍 ${distanceKm} km</span></div>` : ''}
+                    </div>
+                    ${stop.note ? `<div class="note">📌 ${stop.note}</div>` : ''}
+                `;
+
+                card.addEventListener('click', () => {
+                    document.querySelectorAll('.day-card').forEach(c => c.classList.remove('active'));
+                    card.classList.add('active');
+                    map.flyTo([stop.lat, stop.lng], 10, { duration: 1 });
+                });
+
+                container.appendChild(card);
+            });
+        }
+
+        function renderPhotos() {
+            const container = document.getElementById('photos-tab');
+            document.getElementById('totalPhotos').textContent = photos.length;
+
+            if (photos.length === 0) {
+                container.innerHTML = '<div class="no-photos">📷 No photos yet. Admin can upload photos from the admin panel.</div>';
+                return;
+            }
+
+            container.innerHTML = '<div class="photo-grid" id="photoGrid"></div>';
+            const grid = document.getElementById('photoGrid');
+
+            photos.forEach(photo => {
+                const card = document.createElement('div');
+                card.className = 'photo-card';
+                card.innerHTML = `
+                    <img src="/uploads/${photo.filename}" alt="${photo.caption || 'Trip photo'}">
+                    ${photo.caption ? `<div class="photo-caption">${photo.caption}</div>` : ''}
+                `;
+                card.addEventListener('click', () => openPhotoModal(photo));
+                grid.appendChild(card);
+            });
+        }
+
+        function renderMap() {
+            // Clear existing layers
+            map.eachLayer(layer => {
+                if (layer instanceof L.Marker || layer instanceof L.Polyline) {
+                    map.removeLayer(layer);
+                }
+            });
+
+            // Draw cached route segments
+            cachedRoutes.forEach((route) => {
+                const color = route.from_order <= 4 ? '#0ea5e9' :
+                              route.from_order >= 5 && route.from_order <= 8 ? '#f97316' : '#a855f7';
+
+                const coordinates = route.geometry.map(coord => [coord[0], coord[1]]);
+
+                L.polyline(coordinates, {
+                    color: color,
+                    weight: 3,
+                    opacity: 0.7,
+                    dashArray: route.from_city.includes('Bhutan') || route.to_city.includes('Bhutan') ? '8, 8' : null
+                }).addTo(map).bindPopup(`
+                    <b>${route.from_city} → ${route.to_city}</b><br>
+                    Distance: ${(route.distance_meters / 1000).toFixed(1)} km<br>
+                    Duration: ${formatDuration(route.duration_seconds)}
+                `);
+            });
+
+            // Draw live route if active
+            if (liveRoute && liveRoute.active) {
+                const coordinates = liveRoute.geometry.map(coord => [coord[0], coord[1]]);
+
+                L.polyline(coordinates, {
+                    color: '#22c55e',
+                    weight: 4,
+                    opacity: 0.9,
+                    dashArray: '10, 5'
+                }).addTo(map).bindPopup(`
+                    <b style="color:#22c55e">🏍️ Live Route to ${liveRoute.to_city}</b><br>
+                    Remaining: ${(liveRoute.distance_meters / 1000).toFixed(1)} km<br>
+                    ETA: ${formatDuration(liveRoute.duration_seconds)}
+                `);
+
+                showCurrentLegBanner(liveRoute.to_city, liveRoute.distance_meters, liveRoute.duration_seconds);
+            } else {
+                // Hide current leg banner if not active
+                const banner = document.getElementById('currentLegBanner');
+                if (banner) banner.style.display = 'none';
+            }
+
+            // Draw stop markers
+            stops.forEach((stop, index) => {
+                const markerColor = stop.is_start || stop.is_end ? '#ff6b35' :
+                                   index <= 4 ? '#0ea5e9' : index >= 5 && index <= 8 ? '#f97316' : '#a855f7';
+
+                L.marker([stop.lat, stop.lng], {
+                    icon: L.divIcon({
+                        className: 'marker',
+                        html: `<div style="width:${stop.is_start || stop.is_end ? 14 : 10}px;height:${stop.is_start || stop.is_end ? 14 : 10}px;background:${markerColor};border:2px solid white;border-radius:50%;box-shadow:0 0 8px ${markerColor}80;"></div>`,
+                        iconSize: [12, 12],
+                        iconAnchor: [6, 6]
+                    })
+                }).addTo(map).bindPopup(`<b style="color:${markerColor}">${stop.city}</b>`);
+            });
+
+            // Fit bounds
+            if (stops.length > 0) {
+                const bounds = stops.map(s => [s.lat, s.lng]);
+                map.fitBounds(bounds, { padding: [30, 30] });
+            }
+
+            // Add photo markers
+            photos.filter(p => p.lat && p.lng).forEach(photo => {
+                L.marker([photo.lat, photo.lng], {
+                    icon: L.divIcon({
+                        className: 'photo-marker',
+                        html: '<div style="width:20px;height:20px;background:var(--accent-pink);border:2px solid white;border-radius:4px;display:flex;align-items:center;justify-content:center;font-size:10px;">📷</div>',
+                        iconSize: [20, 20],
+                        iconAnchor: [10, 10]
+                    })
+                }).addTo(map).bindPopup(`<img src="/uploads/${photo.filename}" style="width:150px;border-radius:4px"><br><small>${photo.caption || ''}</small>`);
+            });
+        }
+
+        function updateStats() {
+            let totalKm = 0;
+
+            if (cachedRoutes.length > 0) {
+                totalKm = cachedRoutes.reduce((sum, route) => sum + route.distance_meters, 0) / 1000;
+            } else {
+                // Fallback to straight-line distances
+                for (let i = 1; i < stops.length; i++) {
+                    totalKm += haversineDistance(stops[i-1].lat, stops[i-1].lng, stops[i].lat, stops[i].lng);
+                }
+            }
+
+            document.getElementById('totalKm').textContent = Math.round(totalKm).toLocaleString();
+
+            if (stops.length >= 2) {
+                const startDate = new Date(stops[0].date);
+                const endDate = new Date(stops[stops.length - 1].date);
+                const days = Math.ceil((endDate - startDate) / (1000 * 60 * 60 * 24)) + 1;
+                document.getElementById('totalDays').textContent = days;
+            }
+        }
+
+        function updateLiveLocation(loc) {
+            document.getElementById('liveBanner').style.display = 'flex';
+            document.getElementById('liveLocationText').textContent = `Updated: ${new Date(loc.updated_at).toLocaleTimeString()}`;
+
+            if (liveMarker) {
+                liveMarker.setLatLng([loc.lat, loc.lng]);
+            } else {
+                liveMarker = L.marker([loc.lat, loc.lng], {
+                    icon: L.divIcon({
+                        className: 'live-marker',
+                        html: '<div style="font-size:28px;text-shadow:0 0 10px #22c55e,0 0 20px #22c55e;animation:pulse 2s infinite;">🏍️</div>',
+                        iconSize: [32, 32],
+                        iconAnchor: [16, 16]
+                    })
+                }).addTo(map).bindPopup('<b style="color:#22c55e">🏍️ Live Location</b>');
+            }
+        }
+
+        function formatDuration(seconds) {
+            const hours = Math.floor(seconds / 3600);
+            const mins = Math.floor((seconds % 3600) / 60);
+            return hours > 0 ? `${hours}h ${mins}m` : `${mins}m`;
+        }
+
+        function showCurrentLegBanner(toCity, distanceMeters, durationSeconds) {
+            const banner = document.getElementById('currentLegBanner');
+            if (banner) {
+                document.getElementById('legRoute').textContent = `Currently: → ${toCity}`;
+                document.getElementById('legDetails').textContent =
+                    `${(distanceMeters / 1000).toFixed(1)} km remaining • ETA: ${formatDuration(durationSeconds)}`;
+                banner.style.display = 'flex';
+            }
+        }
+
+        function setupTabs() {
+            document.querySelectorAll('.tab-btn').forEach(btn => {
+                btn.addEventListener('click', () => {
+                    document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+                    document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+                    btn.classList.add('active');
+                    document.getElementById(`${btn.dataset.tab}-tab`).classList.add('active');
+                });
+            });
+        }
+
+        function setupSocketListeners() {
+            socket.on('stops_updated', loadData);
+            socket.on('photo_added', (photo) => {
+                photos.unshift(photo);
+                renderPhotos();
+                renderMap();
+            });
+            socket.on('photo_deleted', (id) => {
+                photos = photos.filter(p => p.id !== id);
+                renderPhotos();
+                renderMap();
+            });
+            socket.on('location_updated', updateLiveLocation);
+            socket.on('routes_updated', async () => {
+                await loadRoutes();
+                renderMap();
+                updateStats();
+            });
+            socket.on('live_route_updated', (data) => {
+                liveRoute = data;
+                renderMap();
+            });
+            socket.on('routes_invalidated', () => {
+                cachedRoutes = [];
+                renderMap();
+            });
+            socket.on('photo_uploaded_notification', (data) => {
+                // Only show notification if user is not admin (admin uploaded it)
+                if (currentUser && currentUser.role !== 'admin') {
+                    showNotification('📷 New Photo Uploaded', {
+                        body: data.caption,
+                        icon: '/favicon.ico',
+                        tag: 'new-photo'
+                    });
+                }
+            });
+        }
+
+        function openPhotoModal(photo) {
+            document.getElementById('modalPhoto').src = `/uploads/${photo.filename}`;
+            document.getElementById('modalCaption').textContent = photo.caption || '';
+            document.getElementById('photoModal').classList.add('active');
+        }
+
+        function closePhotoModal() {
+            document.getElementById('photoModal').classList.remove('active');
+        }
+
+        function haversineDistance(lat1, lng1, lat2, lng2) {
+            const R = 6371;
+            const dLat = (lat2 - lat1) * Math.PI / 180;
+            const dLng = (lng2 - lng1) * Math.PI / 180;
+            const a = Math.sin(dLat/2) ** 2 + Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * Math.sin(dLng/2) ** 2;
+            return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+        }
+
+        document.getElementById('photoModal').addEventListener('click', (e) => {
+            if (e.target.id === 'photoModal') closePhotoModal();
+        });
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape') closePhotoModal();
+        });
+
+        // Initialize
+        checkAuth();
+    </script>
+</body>
+</html>

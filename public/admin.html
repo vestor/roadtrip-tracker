@@ -1,0 +1,931 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Admin - Road Trip Tracker</title>
+    <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=DM+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <script src="/socket.io/socket.io.js"></script>
+    <style>
+        :root {
+            --bg-dark: #0f0f0f;
+            --bg-card: #1a1a1a;
+            --accent-orange: #ff6b35;
+            --accent-gold: #f7c948;
+            --accent-teal: #2dd4bf;
+            --accent-purple: #a855f7;
+            --accent-green: #22c55e;
+            --accent-red: #ef4444;
+            --text-primary: #ffffff;
+            --text-secondary: #a1a1aa;
+            --text-muted: #52525b;
+        }
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: 'DM Sans', sans-serif;
+            background: var(--bg-dark);
+            color: var(--text-primary);
+            min-height: 100vh;
+        }
+        .header {
+            background: var(--bg-card);
+            padding: 20px 30px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            border-bottom: 1px solid rgba(255,255,255,0.1);
+        }
+        .header h1 {
+            font-family: 'Bebas Neue', sans-serif;
+            font-size: 1.8rem;
+            background: linear-gradient(135deg, var(--accent-orange), var(--accent-gold));
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+        .header-actions { display: flex; gap: 10px; }
+        .btn {
+            padding: 10px 20px;
+            border: none;
+            border-radius: 8px;
+            font-weight: 600;
+            cursor: pointer;
+            font-size: 0.9rem;
+            transition: all 0.2s ease;
+        }
+        .btn-primary {
+            background: linear-gradient(135deg, var(--accent-orange), var(--accent-gold));
+            color: #000;
+        }
+        .btn-secondary { background: rgba(255,255,255,0.1); color: var(--text-primary); }
+        .btn-danger { background: var(--accent-red); color: white; }
+        .btn-success { background: var(--accent-green); color: white; }
+        .btn:hover { transform: translateY(-2px); }
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 30px;
+        }
+        .tabs {
+            display: flex;
+            gap: 5px;
+            margin-bottom: 25px;
+            background: var(--bg-card);
+            padding: 5px;
+            border-radius: 12px;
+        }
+        .tab-btn {
+            flex: 1;
+            padding: 12px;
+            background: none;
+            border: none;
+            color: var(--text-secondary);
+            cursor: pointer;
+            font-weight: 600;
+            border-radius: 8px;
+            transition: all 0.2s ease;
+        }
+        .tab-btn.active {
+            background: var(--accent-orange);
+            color: #000;
+        }
+        .tab-content { display: none; }
+        .tab-content.active { display: block; }
+        .section-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+        }
+        .section-title {
+            font-family: 'Bebas Neue', sans-serif;
+            font-size: 1.5rem;
+            color: var(--accent-gold);
+        }
+        .card {
+            background: var(--bg-card);
+            border-radius: 12px;
+            padding: 20px;
+            margin-bottom: 15px;
+            border: 1px solid rgba(255,255,255,0.05);
+        }
+        .stop-card {
+            display: grid;
+            grid-template-columns: auto 1fr auto;
+            gap: 15px;
+            align-items: center;
+        }
+        .stop-order {
+            font-family: 'Bebas Neue', sans-serif;
+            font-size: 1.5rem;
+            color: var(--accent-orange);
+            width: 40px;
+            text-align: center;
+        }
+        .stop-info h3 { margin-bottom: 5px; }
+        .stop-info p { font-size: 0.85rem; color: var(--text-secondary); }
+        .stop-actions { display: flex; gap: 8px; }
+        .stop-actions button {
+            padding: 8px 12px;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 0.8rem;
+        }
+        .stop-actions .edit { background: rgba(255,255,255,0.1); color: var(--text-primary); }
+        .stop-actions .delete { background: rgba(239, 68, 68, 0.2); color: var(--accent-red); }
+        .user-card {
+            display: flex;
+            align-items: center;
+            gap: 15px;
+        }
+        .user-avatar {
+            width: 50px;
+            height: 50px;
+            border-radius: 50%;
+            border: 2px solid var(--accent-purple);
+        }
+        .user-info { flex: 1; }
+        .user-info h3 { margin-bottom: 3px; }
+        .user-info p { font-size: 0.85rem; color: var(--text-secondary); }
+        .user-role {
+            padding: 4px 12px;
+            border-radius: 12px;
+            font-size: 0.75rem;
+            font-weight: 600;
+        }
+        .user-role.admin { background: rgba(168, 85, 247, 0.2); color: var(--accent-purple); }
+        .user-role.viewer { background: rgba(34, 197, 94, 0.2); color: var(--accent-green); }
+        .user-role.pending { background: rgba(251, 191, 36, 0.2); color: #fbbf24; }
+        .photo-upload-area {
+            border: 2px dashed rgba(255,255,255,0.2);
+            border-radius: 12px;
+            padding: 40px;
+            text-align: center;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            margin-bottom: 20px;
+        }
+        .photo-upload-area:hover { border-color: var(--accent-orange); }
+        .photo-upload-area.dragover { border-color: var(--accent-green); background: rgba(34, 197, 94, 0.1); }
+        .photo-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+            gap: 15px;
+        }
+        .photo-card {
+            position: relative;
+            border-radius: 10px;
+            overflow: hidden;
+            aspect-ratio: 1;
+        }
+        .photo-card img { width: 100%; height: 100%; object-fit: cover; }
+        .photo-card .delete-btn {
+            position: absolute;
+            top: 5px;
+            right: 5px;
+            background: var(--accent-red);
+            border: none;
+            width: 28px;
+            height: 28px;
+            border-radius: 50%;
+            color: white;
+            cursor: pointer;
+            font-size: 1rem;
+            display: none;
+        }
+        .photo-card:hover .delete-btn { display: block; }
+        .location-section { text-align: center; }
+        .location-status {
+            padding: 20px;
+            background: rgba(34, 197, 94, 0.1);
+            border: 1px solid rgba(34, 197, 94, 0.3);
+            border-radius: 12px;
+            margin-bottom: 20px;
+        }
+        .location-status h3 { color: var(--accent-green); margin-bottom: 10px; }
+        .location-coords { font-family: monospace; font-size: 1.2rem; margin: 10px 0; }
+        .modal-overlay {
+            position: fixed;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background: rgba(0,0,0,0.85);
+            z-index: 2000;
+            display: none;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+        }
+        .modal-overlay.active { display: flex; }
+        .modal {
+            background: var(--bg-card);
+            border-radius: 16px;
+            max-width: 500px;
+            width: 100%;
+            max-height: 90vh;
+            overflow-y: auto;
+            border: 1px solid rgba(255,255,255,0.1);
+        }
+        .modal-header {
+            padding: 20px;
+            border-bottom: 1px solid rgba(255,255,255,0.1);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .modal-title { font-family: 'Bebas Neue', sans-serif; font-size: 1.5rem; color: var(--accent-orange); }
+        .modal-close {
+            background: none;
+            border: none;
+            color: var(--text-primary);
+            font-size: 1.5rem;
+            cursor: pointer;
+        }
+        .modal-body { padding: 20px; }
+        .form-group { margin-bottom: 15px; }
+        .form-label { display: block; font-size: 0.8rem; color: var(--text-secondary); margin-bottom: 5px; }
+        .form-input, .form-select {
+            width: 100%;
+            padding: 10px 14px;
+            background: rgba(255,255,255,0.05);
+            border: 1px solid rgba(255,255,255,0.1);
+            border-radius: 8px;
+            color: var(--text-primary);
+            font-size: 0.95rem;
+        }
+        .form-input:focus, .form-select:focus { outline: none; border-color: var(--accent-orange); }
+        .form-row { display: grid; grid-template-columns: 1fr 1fr; gap: 15px; }
+        .form-actions { display: flex; gap: 10px; margin-top: 20px; }
+        .form-actions .btn { flex: 1; }
+        .alert {
+            padding: 12px 16px;
+            border-radius: 8px;
+            margin-bottom: 15px;
+            font-size: 0.9rem;
+        }
+        .alert-success { background: rgba(34, 197, 94, 0.2); color: var(--accent-green); }
+        .alert-error { background: rgba(239, 68, 68, 0.2); color: var(--accent-red); }
+        .hidden { display: none !important; }
+    </style>
+</head>
+<body>
+    <header class="header">
+        <h1>⚙️ Admin Panel</h1>
+        <div class="header-actions">
+            <a href="/" class="btn btn-secondary">← Back to Trip</a>
+            <button class="btn btn-secondary" onclick="window.location.href='/auth/logout'">Logout</button>
+        </div>
+    </header>
+
+    <div class="container">
+        <div class="tabs">
+            <button class="tab-btn active" data-tab="stops">📍 Stops</button>
+            <button class="tab-btn" data-tab="users">👥 Users</button>
+            <button class="tab-btn" data-tab="photos">📷 Photos</button>
+            <button class="tab-btn" data-tab="location">📍 Live Location</button>
+            <button class="tab-btn" data-tab="routes">🛣️ Routes</button>
+        </div>
+
+        <!-- Stops Tab -->
+        <div class="tab-content active" id="stops-tab">
+            <div class="section-header">
+                <h2 class="section-title">Manage Stops</h2>
+                <button class="btn btn-primary" onclick="openStopModal()">+ Add Stop</button>
+            </div>
+            <div id="stopsContainer"></div>
+        </div>
+
+        <!-- Users Tab -->
+        <div class="tab-content" id="users-tab">
+            <div class="section-header">
+                <h2 class="section-title">Manage Users</h2>
+            </div>
+            <div id="usersContainer"></div>
+        </div>
+
+        <!-- Photos Tab -->
+        <div class="tab-content" id="photos-tab">
+            <div class="section-header">
+                <h2 class="section-title">Upload Photos</h2>
+            </div>
+            <div class="photo-upload-area" id="uploadArea">
+                <p style="font-size: 2rem; margin-bottom: 10px;">📷</p>
+                <p>Drag & drop photos here or click to select</p>
+                <p style="font-size: 0.8rem; color: var(--text-muted); margin-top: 10px;">Max 10MB per image • JPG, PNG, GIF, WebP</p>
+                <input type="file" id="photoInput" accept="image/*" multiple style="display:none">
+            </div>
+            <div class="photo-grid" id="photosContainer"></div>
+        </div>
+
+        <!-- Live Location Tab -->
+        <div class="tab-content" id="location-tab">
+            <div class="section-header">
+                <h2 class="section-title">Live Location Sharing</h2>
+            </div>
+            <div class="location-section">
+                <div class="location-status" id="locationStatus">
+                    <h3>📍 Location Status</h3>
+                    <p id="locationText">Location sharing is off</p>
+                    <p class="location-coords" id="locationCoords">—</p>
+                    <p style="font-size: 0.8rem; color: var(--text-muted);" id="locationTime"></p>
+                </div>
+                <button class="btn btn-success" id="startLocationBtn" onclick="startLocationSharing()">
+                    🔴 Start Sharing Location
+                </button>
+                <button class="btn btn-danger hidden" id="stopLocationBtn" onclick="stopLocationSharing()">
+                    ⏹️ Stop Sharing
+                </button>
+                <p style="margin-top: 15px; font-size: 0.85rem; color: var(--text-secondary);">
+                    When enabled, your live location will be visible to all approved users on the map.
+                </p>
+            </div>
+        </div>
+
+        <!-- Routes Tab -->
+        <div class="tab-content" id="routes-tab">
+            <div class="section-header">
+                <h2 class="section-title">🛣️ Route Management</h2>
+                <button class="btn btn-primary" onclick="recalculateRoutes()">
+                    🔄 Recalculate All Routes
+                </button>
+            </div>
+
+            <div class="card">
+                <h3>Route Cache Status</h3>
+                <p id="routeCount">Loading...</p>
+                <div id="routeList" style="margin-top: 15px;"></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Stop Modal -->
+    <div class="modal-overlay" id="stopModal">
+        <div class="modal">
+            <div class="modal-header">
+                <h2 class="modal-title" id="stopModalTitle">Add Stop</h2>
+                <button class="modal-close" onclick="closeStopModal()">×</button>
+            </div>
+            <div class="modal-body">
+                <input type="hidden" id="editingStopId">
+                <div class="form-group">
+                    <label class="form-label">City Name *</label>
+                    <input type="text" class="form-input" id="stopCity" placeholder="e.g., Nagpur">
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label class="form-label">Latitude *</label>
+                        <input type="number" step="0.0001" class="form-input" id="stopLat" placeholder="21.1458">
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Longitude *</label>
+                        <input type="number" step="0.0001" class="form-input" id="stopLng" placeholder="79.0882">
+                    </div>
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label class="form-label">Arrival Date *</label>
+                        <input type="date" class="form-input" id="stopDate">
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Nights Stay</label>
+                        <input type="number" min="0" class="form-input" id="stopNights" value="0">
+                    </div>
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label class="form-label">Day Type</label>
+                        <select class="form-select" id="stopType">
+                            <option value="normal">Normal</option>
+                            <option value="workday">Work Day</option>
+                            <option value="holiday">Holiday</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Fog Zone?</label>
+                        <select class="form-select" id="stopFogZone">
+                            <option value="0">No</option>
+                            <option value="1">Yes</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Note</label>
+                    <input type="text" class="form-input" id="stopNote" placeholder="e.g., Christmas, Tiger's Nest">
+                </div>
+                <div class="form-actions">
+                    <button class="btn btn-secondary" onclick="closeStopModal()">Cancel</button>
+                    <button class="btn btn-primary" onclick="saveStop()">Save Stop</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Photo Upload Modal -->
+    <div class="modal-overlay" id="photoModal">
+        <div class="modal">
+            <div class="modal-header">
+                <h2 class="modal-title">Upload Photo</h2>
+                <button class="modal-close" onclick="closePhotoModal()">×</button>
+            </div>
+            <div class="modal-body">
+                <div id="photoPreview" style="text-align:center;margin-bottom:15px;"></div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label class="form-label">Latitude (optional)</label>
+                        <input type="number" step="0.0001" class="form-input" id="photoLat">
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Longitude (optional)</label>
+                        <input type="number" step="0.0001" class="form-input" id="photoLng">
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Caption</label>
+                    <input type="text" class="form-input" id="photoCaption" placeholder="Describe this moment...">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Link to Stop</label>
+                    <select class="form-select" id="photoStopId">
+                        <option value="">None</option>
+                    </select>
+                </div>
+                <div class="form-actions">
+                    <button class="btn btn-secondary" onclick="closePhotoModal()">Cancel</button>
+                    <button class="btn btn-primary" onclick="uploadPhoto()">Upload</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const socket = io();
+        let stops = [], users = [], photos = [];
+        let currentPhotoFile = null;
+        let locationWatchId = null;
+
+        // Request notification permission on load
+        async function requestNotificationPermission() {
+            if ('Notification' in window && Notification.permission === 'default') {
+                await Notification.requestPermission();
+            }
+        }
+
+        function showNotification(title, options) {
+            if ('Notification' in window && Notification.permission === 'granted') {
+                new Notification(title, options);
+            }
+        }
+
+        // Check if admin
+        async function checkAdmin() {
+            try {
+                const res = await fetch('/auth/me');
+                const data = await res.json();
+                if (!data.user || data.user.role !== 'admin') {
+                    alert('Admin access required');
+                    window.location.href = '/';
+                    return;
+                }
+                loadData();
+            } catch (err) {
+                window.location.href = '/';
+            }
+        }
+
+        async function loadData() {
+            try {
+                const [stopsRes, usersRes, photosRes, locRes] = await Promise.all([
+                    fetch('/api/stops'),
+                    fetch('/api/users'),
+                    fetch('/api/photos'),
+                    fetch('/api/location')
+                ]);
+                stops = await stopsRes.json();
+                users = await usersRes.json();
+                photos = await photosRes.json();
+                const location = await locRes.json();
+
+                renderStops();
+                renderUsers();
+                renderPhotos();
+                updateLocationStatus(location);
+            } catch (err) {
+                console.error('Failed to load data:', err);
+            }
+        }
+
+        function renderStops() {
+            const container = document.getElementById('stopsContainer');
+            container.innerHTML = '';
+
+            stops.forEach((stop, index) => {
+                const date = new Date(stop.date + 'T00:00:00');
+                const dateStr = date.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
+
+                const card = document.createElement('div');
+                card.className = 'card stop-card';
+                card.innerHTML = `
+                    <div class="stop-order">${index + 1}</div>
+                    <div class="stop-info">
+                        <h3>${stop.city} ${stop.is_start ? '🏁' : ''} ${stop.is_end ? '🏁' : ''}</h3>
+                        <p>${dateStr} • ${stop.type} ${stop.nights > 0 ? `• ${stop.nights} nights` : ''} ${stop.note ? `• ${stop.note}` : ''}</p>
+                        <p style="font-size:0.75rem;color:var(--text-muted);">📍 ${stop.lat}, ${stop.lng}</p>
+                    </div>
+                    <div class="stop-actions">
+                        <button class="edit" onclick="editStop(${stop.id})">✏️ Edit</button>
+                        ${!stop.is_start && !stop.is_end ? `<button class="delete" onclick="deleteStop(${stop.id})">🗑️</button>` : ''}
+                    </div>
+                `;
+                container.appendChild(card);
+            });
+        }
+
+        function renderUsers() {
+            const container = document.getElementById('usersContainer');
+            container.innerHTML = '';
+
+            users.forEach(user => {
+                const card = document.createElement('div');
+                card.className = 'card user-card';
+                card.innerHTML = `
+                    <img class="user-avatar" src="${user.picture || ''}" alt="">
+                    <div class="user-info">
+                        <h3>${user.name}</h3>
+                        <p>${user.email}</p>
+                    </div>
+                    <span class="user-role ${user.role}">${user.role}</span>
+                    <div style="display:flex;gap:8px;margin-left:15px;">
+                        ${user.role === 'pending' ? `<button class="btn btn-success" style="padding:6px 12px;font-size:0.8rem;" onclick="approveUser('${user.id}')">✓ Approve</button>` : ''}
+                        ${user.role !== 'admin' ? `<button class="btn btn-danger" style="padding:6px 12px;font-size:0.8rem;" onclick="removeUser('${user.id}')">Remove</button>` : ''}
+                    </div>
+                `;
+                container.appendChild(card);
+            });
+        }
+
+        function renderPhotos() {
+            const container = document.getElementById('photosContainer');
+            container.innerHTML = '';
+
+            photos.forEach(photo => {
+                const card = document.createElement('div');
+                card.className = 'photo-card';
+                card.innerHTML = `
+                    <img src="/uploads/${photo.filename}" alt="${photo.caption || ''}">
+                    <button class="delete-btn" onclick="deletePhoto('${photo.id}')">×</button>
+                `;
+                container.appendChild(card);
+            });
+
+            // Update stop select in photo modal
+            const select = document.getElementById('photoStopId');
+            select.innerHTML = '<option value="">None</option>';
+            stops.forEach(stop => {
+                select.innerHTML += `<option value="${stop.id}">${stop.city}</option>`;
+            });
+        }
+
+        // Stop CRUD
+        function openStopModal(stop = null) {
+            document.getElementById('stopModalTitle').textContent = stop ? 'Edit Stop' : 'Add Stop';
+            document.getElementById('editingStopId').value = stop ? stop.id : '';
+            document.getElementById('stopCity').value = stop ? stop.city : '';
+            document.getElementById('stopLat').value = stop ? stop.lat : '';
+            document.getElementById('stopLng').value = stop ? stop.lng : '';
+            document.getElementById('stopDate').value = stop ? stop.date : '';
+            document.getElementById('stopNights').value = stop ? stop.nights : 0;
+            document.getElementById('stopType').value = stop ? stop.type : 'normal';
+            document.getElementById('stopFogZone').value = stop ? stop.fog_zone : 0;
+            document.getElementById('stopNote').value = stop ? stop.note : '';
+            document.getElementById('stopModal').classList.add('active');
+        }
+
+        function closeStopModal() {
+            document.getElementById('stopModal').classList.remove('active');
+        }
+
+        function editStop(id) {
+            const stop = stops.find(s => s.id === id);
+            if (stop) openStopModal(stop);
+        }
+
+        async function saveStop() {
+            const id = document.getElementById('editingStopId').value;
+            const data = {
+                city: document.getElementById('stopCity').value,
+                lat: parseFloat(document.getElementById('stopLat').value),
+                lng: parseFloat(document.getElementById('stopLng').value),
+                date: document.getElementById('stopDate').value,
+                nights: parseInt(document.getElementById('stopNights').value) || 0,
+                type: document.getElementById('stopType').value,
+                fog_zone: parseInt(document.getElementById('stopFogZone').value),
+                note: document.getElementById('stopNote').value
+            };
+
+            if (!data.city || !data.lat || !data.lng || !data.date) {
+                alert('Please fill required fields');
+                return;
+            }
+
+            try {
+                const url = id ? `/api/stops/${id}` : '/api/stops';
+                const method = id ? 'PUT' : 'POST';
+                
+                // Preserve order_index if editing
+                if (id) {
+                    const existing = stops.find(s => s.id == id);
+                    if (existing) data.order_index = existing.order_index;
+                }
+
+                await fetch(url, {
+                    method,
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(data)
+                });
+
+                closeStopModal();
+                loadData();
+            } catch (err) {
+                alert('Failed to save stop');
+            }
+        }
+
+        async function deleteStop(id) {
+            if (!confirm('Delete this stop?')) return;
+            try {
+                await fetch(`/api/stops/${id}`, { method: 'DELETE' });
+                loadData();
+            } catch (err) {
+                alert('Failed to delete stop');
+            }
+        }
+
+        // User management
+        async function approveUser(id) {
+            try {
+                await fetch(`/api/users/${id}/role`, {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ role: 'viewer' })
+                });
+                loadData();
+            } catch (err) {
+                alert('Failed to approve user');
+            }
+        }
+
+        async function removeUser(id) {
+            if (!confirm('Remove this user?')) return;
+            try {
+                await fetch(`/api/users/${id}`, { method: 'DELETE' });
+                loadData();
+            } catch (err) {
+                alert('Failed to remove user');
+            }
+        }
+
+        // Photo upload
+        const uploadArea = document.getElementById('uploadArea');
+        const photoInput = document.getElementById('photoInput');
+
+        uploadArea.addEventListener('click', () => photoInput.click());
+        uploadArea.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            uploadArea.classList.add('dragover');
+        });
+        uploadArea.addEventListener('dragleave', () => uploadArea.classList.remove('dragover'));
+        uploadArea.addEventListener('drop', (e) => {
+            e.preventDefault();
+            uploadArea.classList.remove('dragover');
+            handleFiles(e.dataTransfer.files);
+        });
+        photoInput.addEventListener('change', (e) => handleFiles(e.target.files));
+
+        function handleFiles(files) {
+            Array.from(files).forEach(file => {
+                if (file.type.startsWith('image/')) {
+                    currentPhotoFile = file;
+                    showPhotoModal(file);
+                }
+            });
+        }
+
+        function showPhotoModal(file) {
+            const reader = new FileReader();
+            reader.onload = (e) => {
+                document.getElementById('photoPreview').innerHTML = 
+                    `<img src="${e.target.result}" style="max-width:100%;max-height:200px;border-radius:8px;">`;
+            };
+            reader.readAsDataURL(file);
+            
+            // Try to get current location for photo
+            if (navigator.geolocation) {
+                navigator.geolocation.getCurrentPosition((pos) => {
+                    document.getElementById('photoLat').value = pos.coords.latitude.toFixed(6);
+                    document.getElementById('photoLng').value = pos.coords.longitude.toFixed(6);
+                });
+            }
+            
+            document.getElementById('photoModal').classList.add('active');
+        }
+
+        function closePhotoModal() {
+            document.getElementById('photoModal').classList.remove('active');
+            currentPhotoFile = null;
+        }
+
+        async function uploadPhoto() {
+            if (!currentPhotoFile) return;
+
+            const formData = new FormData();
+            formData.append('photo', currentPhotoFile);
+            formData.append('lat', document.getElementById('photoLat').value || '');
+            formData.append('lng', document.getElementById('photoLng').value || '');
+            formData.append('caption', document.getElementById('photoCaption').value);
+            formData.append('stop_id', document.getElementById('photoStopId').value);
+
+            try {
+                await fetch('/api/photos', { method: 'POST', body: formData });
+                closePhotoModal();
+                loadData();
+            } catch (err) {
+                alert('Failed to upload photo');
+            }
+        }
+
+        async function deletePhoto(id) {
+            if (!confirm('Delete this photo?')) return;
+            try {
+                await fetch(`/api/photos/${id}`, { method: 'DELETE' });
+                loadData();
+            } catch (err) {
+                alert('Failed to delete photo');
+            }
+        }
+
+        // Location sharing
+        function updateLocationStatus(loc) {
+            if (loc && loc.lat && loc.lng) {
+                document.getElementById('locationText').textContent = 'Location sharing is active';
+                document.getElementById('locationCoords').textContent = `${loc.lat.toFixed(6)}, ${loc.lng.toFixed(6)}`;
+                document.getElementById('locationTime').textContent = `Last updated: ${new Date(loc.updated_at).toLocaleString()}`;
+            }
+        }
+
+        function startLocationSharing() {
+            if (!navigator.geolocation) {
+                alert('Geolocation is not supported by your browser');
+                return;
+            }
+
+            document.getElementById('startLocationBtn').classList.add('hidden');
+            document.getElementById('stopLocationBtn').classList.remove('hidden');
+
+            locationWatchId = navigator.geolocation.watchPosition(
+                async (pos) => {
+                    const data = {
+                        lat: pos.coords.latitude,
+                        lng: pos.coords.longitude,
+                        accuracy: pos.coords.accuracy,
+                        speed: pos.coords.speed,
+                        heading: pos.coords.heading
+                    };
+
+                    try {
+                        await fetch('/api/location', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify(data)
+                        });
+                        
+                        document.getElementById('locationText').textContent = 'Location sharing is active';
+                        document.getElementById('locationCoords').textContent = `${data.lat.toFixed(6)}, ${data.lng.toFixed(6)}`;
+                        document.getElementById('locationTime').textContent = `Last updated: ${new Date().toLocaleString()}`;
+                    } catch (err) {
+                        console.error('Failed to update location:', err);
+                    }
+                },
+                (err) => {
+                    console.error('Geolocation error:', err);
+                    alert('Failed to get location: ' + err.message);
+                },
+                { enableHighAccuracy: true, maximumAge: 30000, timeout: 27000 }
+            );
+        }
+
+        function stopLocationSharing() {
+            if (locationWatchId) {
+                navigator.geolocation.clearWatch(locationWatchId);
+                locationWatchId = null;
+            }
+            document.getElementById('startLocationBtn').classList.remove('hidden');
+            document.getElementById('stopLocationBtn').classList.add('hidden');
+            document.getElementById('locationText').textContent = 'Location sharing is paused';
+        }
+
+        // Routes Management
+        async function recalculateRoutes() {
+            if (!confirm('This will recalculate all routes using OpenRouteService API. Continue?')) return;
+
+            const btn = event.target;
+            btn.disabled = true;
+            btn.textContent = '⏳ Calculating...';
+
+            try {
+                const res = await fetch('/api/routes/recalculate', { method: 'POST' });
+                const data = await res.json();
+
+                if (data.errors && data.errors.length > 0) {
+                    alert(`Calculated ${data.calculated}/${data.total} routes.\n\nErrors:\n${data.errors.join('\n')}`);
+                } else {
+                    alert(`✅ Successfully calculated all ${data.calculated} routes!`);
+                }
+
+                loadRouteStatus();
+            } catch (err) {
+                alert('Failed to recalculate routes: ' + err.message);
+            } finally {
+                btn.disabled = false;
+                btn.textContent = '🔄 Recalculate All Routes';
+            }
+        }
+
+        async function loadRouteStatus() {
+            try {
+                const res = await fetch('/api/routes');
+                const routes = await res.json();
+
+                document.getElementById('routeCount').textContent =
+                    `${routes.length} route segments cached`;
+
+                const list = document.getElementById('routeList');
+                list.innerHTML = routes.map(r => `
+                    <div style="padding:8px;border-bottom:1px solid rgba(255,255,255,0.05);">
+                        <strong>${r.from_city} → ${r.to_city}</strong>
+                        <br><small>${(r.distance_meters/1000).toFixed(1)} km • ${formatDuration(r.duration_seconds)}</small>
+                    </div>
+                `).join('');
+            } catch (err) {
+                console.error('Failed to load route status:', err);
+                document.getElementById('routeCount').textContent = 'Failed to load routes';
+            }
+        }
+
+        function formatDuration(seconds) {
+            const hours = Math.floor(seconds / 3600);
+            const mins = Math.floor((seconds % 3600) / 60);
+            return hours > 0 ? `${hours}h ${mins}m` : `${mins}m`;
+        }
+
+        // Tabs
+        document.querySelectorAll('.tab-btn').forEach(btn => {
+            btn.addEventListener('click', () => {
+                document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+                document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+                btn.classList.add('active');
+                document.getElementById(`${btn.dataset.tab}-tab`).classList.add('active');
+
+                // Load route status when Routes tab is shown
+                if (btn.dataset.tab === 'routes') {
+                    loadRouteStatus();
+                }
+            });
+        });
+
+        // Modal close handlers
+        document.getElementById('stopModal').addEventListener('click', (e) => {
+            if (e.target.id === 'stopModal') closeStopModal();
+        });
+        document.getElementById('photoModal').addEventListener('click', (e) => {
+            if (e.target.id === 'photoModal') closePhotoModal();
+        });
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape') {
+                closeStopModal();
+                closePhotoModal();
+            }
+        });
+
+        // Socket listeners
+        socket.on('stops_updated', loadData);
+        socket.on('photo_added', loadData);
+        socket.on('photo_deleted', loadData);
+        socket.on('new_user_signup', (data) => {
+            const message = data.role === 'admin'
+                ? `${data.name} joined as admin!`
+                : `${data.name} is waiting for approval`;
+            showNotification('🔔 New User Sign-Up', {
+                body: message,
+                icon: '/favicon.ico',
+                tag: 'new-user'
+            });
+            // Reload users to show the new user
+            if (document.getElementById('users-tab').classList.contains('active')) {
+                loadData();
+            }
+        });
+
+        // Init
+        checkAdmin();
+        requestNotificationPermission();
+    </script>
+</body>
+</html>

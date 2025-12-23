@@ -1,0 +1,875 @@
+require('dotenv').config();
+const express = require('express');
+const session = require('express-session');
+const passport = require('passport');
+const GoogleStrategy = require('passport-google-oauth20').Strategy;
+const { createServer } = require('http');
+const { Server } = require('socket.io');
+const multer = require('multer');
+const path = require('path');
+const fs = require('fs');
+const { v4: uuidv4 } = require('uuid');
+const Database = require('better-sqlite3');
+const ORSClient = require('./lib/ors-client');
+const sharp = require('sharp');
+
+const app = express();
+const httpServer = createServer(app);
+const io = new Server(httpServer);
+
+const PORT = process.env.PORT || 3000;
+const BASE_URL = process.env.BASE_URL || `http://localhost:${PORT}`;
+
+// ============================================
+// ENSURE DIRECTORIES EXIST
+// ============================================
+if (!fs.existsSync('./data')) fs.mkdirSync('./data', { recursive: true });
+if (!fs.existsSync('./uploads')) fs.mkdirSync('./uploads', { recursive: true });
+
+// ============================================
+// DATABASE SETUP
+// ============================================
+const db = new Database('./data/roadtrip.db');
+
+// Initialize database tables
+db.exec(`
+  CREATE TABLE IF NOT EXISTS users (
+    id TEXT PRIMARY KEY,
+    email TEXT UNIQUE,
+    name TEXT,
+    picture TEXT,
+    role TEXT DEFAULT 'pending',
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  );
+
+  CREATE TABLE IF NOT EXISTS stops (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    city TEXT NOT NULL,
+    lat REAL NOT NULL,
+    lng REAL NOT NULL,
+    date TEXT NOT NULL,
+    nights INTEGER DEFAULT 0,
+    type TEXT DEFAULT 'normal',
+    note TEXT,
+    is_start INTEGER DEFAULT 0,
+    is_end INTEGER DEFAULT 0,
+    fog_zone INTEGER DEFAULT 0,
+    order_index INTEGER,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  );
+
+  CREATE TABLE IF NOT EXISTS live_location (
+    id INTEGER PRIMARY KEY,
+    lat REAL,
+    lng REAL,
+    accuracy REAL,
+    speed REAL,
+    heading REAL,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  );
+
+  CREATE TABLE IF NOT EXISTS photos (
+    id TEXT PRIMARY KEY,
+    filename TEXT NOT NULL,
+    original_name TEXT,
+    lat REAL,
+    lng REAL,
+    caption TEXT,
+    stop_id INTEGER,
+    uploaded_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (stop_id) REFERENCES stops(id)
+  );
+
+  CREATE TABLE IF NOT EXISTS settings (
+    key TEXT PRIMARY KEY,
+    value TEXT
+  );
+
+  CREATE TABLE IF NOT EXISTS route_segments (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    from_stop_id INTEGER NOT NULL,
+    to_stop_id INTEGER NOT NULL,
+    geometry TEXT NOT NULL,
+    distance_meters INTEGER NOT NULL,
+    duration_seconds INTEGER NOT NULL,
+    bbox TEXT,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (from_stop_id) REFERENCES stops(id) ON DELETE CASCADE,
+    FOREIGN KEY (to_stop_id) REFERENCES stops(id) ON DELETE CASCADE,
+    UNIQUE(from_stop_id, to_stop_id)
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_route_segments_stops
+    ON route_segments(from_stop_id, to_stop_id);
+
+  CREATE TABLE IF NOT EXISTS live_route_progress (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    from_lat REAL,
+    from_lng REAL,
+    to_stop_id INTEGER,
+    geometry TEXT,
+    distance_meters INTEGER,
+    duration_seconds INTEGER,
+    is_active INTEGER DEFAULT 0,
+    last_updated DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (to_stop_id) REFERENCES stops(id) ON DELETE SET NULL
+  );
+`);
+
+// Insert default admin if not exists (first user to login becomes admin)
+const adminCheck = db.prepare('SELECT value FROM settings WHERE key = ?').get('admin_email');
+if (!adminCheck) {
+  db.prepare('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)').run('admin_email', '');
+}
+
+// Insert default stops if none exist
+const stopsCount = db.prepare('SELECT COUNT(*) as count FROM stops').get();
+if (stopsCount.count === 0) {
+  const defaultStops = [
+    { city: "Bengaluru", lat: 12.9716, lng: 77.5946, date: "2025-12-24", nights: 0, type: "workday", note: "Starting Point", is_start: 1, order_index: 0 },
+    { city: "Vizag", lat: 17.6868, lng: 83.2185, date: "2025-12-24", nights: 1, type: "workday", note: "", order_index: 1 },
+    { city: "Puri", lat: 19.8135, lng: 85.8312, date: "2025-12-25", nights: 1, type: "holiday", note: "Christmas", order_index: 2 },
+    { city: "Kolkata", lat: 22.5726, lng: 88.3639, date: "2025-12-26", nights: 1, type: "workday", note: "", order_index: 3 },
+    { city: "Siliguri", lat: 26.7271, lng: 88.3953, date: "2025-12-27", nights: 2, type: "normal", note: "Buffer days", order_index: 4 },
+    { city: "Phuentsholing", lat: 26.8516, lng: 89.3884, date: "2025-12-30", nights: 1, type: "workday", note: "🇧🇹 Bhutan Entry", order_index: 5 },
+    { city: "Thimphu", lat: 27.4716, lng: 89.6386, date: "2025-12-31", nights: 1, type: "workday", note: "🇧🇹 NYE", order_index: 6 },
+    { city: "Paro", lat: 27.4287, lng: 89.4164, date: "2026-01-01", nights: 1, type: "holiday", note: "🇧🇹 Tiger's Nest", order_index: 7 },
+    { city: "Siliguri", lat: 26.7271, lng: 88.3953, date: "2026-01-02", nights: 1, type: "workday", note: "Return from Bhutan", order_index: 8 },
+    { city: "Patna", lat: 25.5941, lng: 85.1376, date: "2026-01-03", nights: 1, type: "holiday", note: "", fog_zone: 1, order_index: 9 },
+    { city: "Varanasi", lat: 25.3176, lng: 82.9739, date: "2026-01-04", nights: 1, type: "holiday", note: "Ganga Aarti", fog_zone: 1, order_index: 10 },
+    { city: "Bhedaghat", lat: 23.1095, lng: 79.8804, date: "2026-01-05", nights: 2, type: "workday", note: "Marble Rocks", order_index: 11 },
+    { city: "Indore", lat: 22.7196, lng: 75.8577, date: "2026-01-07", nights: 2, type: "workday", note: "Final Stop - Sarafa Bazaar", is_end: 1, order_index: 12 }
+  ];
+
+  const insertStop = db.prepare(`
+    INSERT INTO stops (city, lat, lng, date, nights, type, note, is_start, is_end, fog_zone, order_index)
+    VALUES (@city, @lat, @lng, @date, @nights, @type, @note, @is_start, @is_end, @fog_zone, @order_index)
+  `);
+
+  defaultStops.forEach(stop => {
+    insertStop.run({
+      ...stop,
+      is_start: stop.is_start || 0,
+      is_end: stop.is_end || 0,
+      fog_zone: stop.fog_zone || 0
+    });
+  });
+}
+
+// Initialize live location row
+const liveLocCheck = db.prepare('SELECT * FROM live_location WHERE id = 1').get();
+if (!liveLocCheck) {
+  db.prepare('INSERT INTO live_location (id, lat, lng) VALUES (1, NULL, NULL)').run();
+}
+
+// Initialize live route progress row
+const liveRouteCheck = db.prepare('SELECT * FROM live_route_progress WHERE id = 1').get();
+if (!liveRouteCheck) {
+  db.prepare('INSERT INTO live_route_progress (id, is_active) VALUES (1, 0)').run();
+}
+
+// ============================================
+// MIDDLEWARE
+// ============================================
+app.use(express.json());
+app.use(express.static('public'));
+app.use('/uploads', express.static('uploads'));
+
+// Session configuration
+app.use(session({
+  secret: process.env.SESSION_SECRET || 'roadtrip-secret-change-this-in-production',
+  resave: false,
+  saveUninitialized: false,
+  cookie: {
+    secure: process.env.NODE_ENV === 'production',
+    maxAge: 30 * 24 * 60 * 60 * 1000 // 30 days
+  }
+}));
+
+app.use(passport.initialize());
+app.use(passport.session());
+
+// ============================================
+// PASSPORT GOOGLE OAUTH
+// ============================================
+if (process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET) {
+  passport.use(new GoogleStrategy({
+    clientID: process.env.GOOGLE_CLIENT_ID,
+    clientSecret: process.env.GOOGLE_CLIENT_SECRET,
+    callbackURL: `${BASE_URL}/auth/google/callback`
+  }, (accessToken, refreshToken, profile, done) => {
+    const email = profile.emails[0].value;
+    const existingUser = db.prepare('SELECT * FROM users WHERE email = ?').get(email);
+    
+    if (existingUser) {
+      return done(null, existingUser);
+    }
+
+    // Check if this is the first user (becomes admin)
+    const adminEmail = db.prepare('SELECT value FROM settings WHERE key = ?').get('admin_email');
+    const userCount = db.prepare('SELECT COUNT(*) as count FROM users').get();
+    const role = (!adminEmail?.value || userCount.count === 0) ? 'admin' : 'pending';
+
+    const userId = uuidv4();
+    db.prepare(`
+      INSERT INTO users (id, email, name, picture, role)
+      VALUES (?, ?, ?, ?, ?)
+    `).run(userId, email, profile.displayName, profile.photos[0]?.value, role);
+
+    if (role === 'admin') {
+      db.prepare('UPDATE settings SET value = ? WHERE key = ?').run(email, 'admin_email');
+    }
+
+    const newUser = db.prepare('SELECT * FROM users WHERE id = ?').get(userId);
+
+    // Notify admins of new user sign-up
+    io.emit('new_user_signup', {
+      name: newUser.name,
+      email: newUser.email,
+      role: newUser.role,
+      timestamp: new Date().toISOString()
+    });
+
+    return done(null, newUser);
+  }));
+
+  passport.serializeUser((user, done) => done(null, user.id));
+  passport.deserializeUser((id, done) => {
+    const user = db.prepare('SELECT * FROM users WHERE id = ?').get(id);
+    done(null, user);
+  });
+}
+
+// ============================================
+// AUTH MIDDLEWARE
+// ============================================
+function isAuthenticated(req, res, next) {
+  if (req.isAuthenticated() && req.user.role !== 'pending') {
+    return next();
+  }
+  if (req.isAuthenticated() && req.user.role === 'pending') {
+    return res.status(403).json({ error: 'Access pending approval' });
+  }
+  res.status(401).json({ error: 'Not authenticated' });
+}
+
+function isAdmin(req, res, next) {
+  if (req.isAuthenticated() && req.user.role === 'admin') {
+    return next();
+  }
+  res.status(403).json({ error: 'Admin access required' });
+}
+
+// ============================================
+// ORS HELPER FUNCTIONS
+// ============================================
+function haversineDistance(lat1, lng1, lat2, lng2) {
+  const R = 6371;
+  const dLat = (lat2 - lat1) * Math.PI / 180;
+  const dLng = (lng2 - lng1) * Math.PI / 180;
+  const a = Math.sin(dLat/2) ** 2 +
+            Math.cos(lat1 * Math.PI / 180) *
+            Math.cos(lat2 * Math.PI / 180) *
+            Math.sin(dLng/2) ** 2;
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+}
+
+function findNextStop(currentLat, currentLng, stops) {
+  const ARRIVAL_THRESHOLD_KM = 5;
+  for (const stop of stops) {
+    const distance = haversineDistance(currentLat, currentLng, stop.lat, stop.lng);
+    if (distance > ARRIVAL_THRESHOLD_KM) {
+      return stop;
+    }
+  }
+  return null;
+}
+
+async function updateLiveRoute(currentLat, currentLng) {
+  const stops = db.prepare('SELECT * FROM stops ORDER BY order_index').all();
+  const nextStop = findNextStop(currentLat, currentLng, stops);
+
+  if (!nextStop) {
+    db.prepare('UPDATE live_route_progress SET is_active = 0 WHERE id = 1').run();
+    io.emit('live_route_updated', { active: false });
+    return;
+  }
+
+  const apiKey = process.env.OPENROUTE_API_KEY;
+  if (!apiKey) return;
+
+  try {
+    const ors = new ORSClient(apiKey);
+    const route = await ors.getRoute(currentLat, currentLng, nextStop.lat, nextStop.lng, 'driving-car');
+
+    db.prepare(`
+      UPDATE live_route_progress SET
+        from_lat = ?, from_lng = ?, to_stop_id = ?,
+        geometry = ?, distance_meters = ?, duration_seconds = ?,
+        is_active = 1, last_updated = datetime('now')
+      WHERE id = 1
+    `).run(currentLat, currentLng, nextStop.id, JSON.stringify(route.geometry), route.distance, route.duration);
+
+    io.emit('live_route_updated', {
+      active: true,
+      to_stop_id: nextStop.id,
+      to_city: nextStop.city,
+      distance_meters: route.distance,
+      duration_seconds: route.duration
+    });
+  } catch (err) {
+    console.error('Failed to calculate live route:', err);
+  }
+}
+
+function invalidateRoutesForStop(stopId) {
+  db.prepare('DELETE FROM route_segments WHERE from_stop_id = ? OR to_stop_id = ?').run(stopId, stopId);
+  io.emit('routes_invalidated');
+}
+
+// ============================================
+// FILE UPLOAD SETUP
+// ============================================
+const storage = multer.diskStorage({
+  destination: (req, file, cb) => {
+    const uploadDir = './uploads';
+    if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir, { recursive: true });
+    cb(null, uploadDir);
+  },
+  filename: (req, file, cb) => {
+    const uniqueName = `${Date.now()}-${uuidv4()}${path.extname(file.originalname)}`;
+    cb(null, uniqueName);
+  }
+});
+
+const upload = multer({
+  storage,
+  limits: { fileSize: 10 * 1024 * 1024 }, // 10MB
+  fileFilter: (req, file, cb) => {
+    const allowedTypes = /jpeg|jpg|png|gif|webp/;
+    const extname = allowedTypes.test(path.extname(file.originalname).toLowerCase());
+    const mimetype = allowedTypes.test(file.mimetype);
+    if (extname && mimetype) {
+      return cb(null, true);
+    }
+    cb(new Error('Only images are allowed'));
+  }
+});
+
+// ============================================
+// AUTH ROUTES
+// ============================================
+app.get('/auth/google', passport.authenticate('google', { scope: ['profile', 'email'] }));
+
+app.get('/auth/google/callback',
+  passport.authenticate('google', { failureRedirect: '/login.html' }),
+  (req, res) => {
+    res.redirect('/');
+  }
+);
+
+app.get('/auth/logout', (req, res) => {
+  req.logout(() => {
+    res.redirect('/login.html');
+  });
+});
+
+app.get('/auth/me', (req, res) => {
+  if (req.isAuthenticated()) {
+    res.json({
+      user: {
+        id: req.user.id,
+        email: req.user.email,
+        name: req.user.name,
+        picture: req.user.picture,
+        role: req.user.role
+      }
+    });
+  } else {
+    res.json({ user: null });
+  }
+});
+
+// ============================================
+// API ROUTES - STOPS
+// ============================================
+app.get('/api/stops', isAuthenticated, (req, res) => {
+  const stops = db.prepare('SELECT * FROM stops ORDER BY order_index').all();
+  res.json(stops);
+});
+
+app.post('/api/stops', isAdmin, (req, res) => {
+  const { city, lat, lng, date, nights, type, note, is_start, is_end, fog_zone } = req.body;
+  
+  // Get max order_index
+  const maxOrder = db.prepare('SELECT MAX(order_index) as max FROM stops').get();
+  const order_index = (maxOrder.max || 0) + 1;
+
+  const result = db.prepare(`
+    INSERT INTO stops (city, lat, lng, date, nights, type, note, is_start, is_end, fog_zone, order_index)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(city, lat, lng, date, nights || 0, type || 'normal', note || '', is_start ? 1 : 0, is_end ? 1 : 0, fog_zone ? 1 : 0, order_index);
+
+  const newStop = db.prepare('SELECT * FROM stops WHERE id = ?').get(result.lastInsertRowid);
+  io.emit('stops_updated');
+  res.json(newStop);
+});
+
+app.put('/api/stops/:id', isAdmin, (req, res) => {
+  const { id } = req.params;
+  const { city, lat, lng, date, nights, type, note, is_start, is_end, fog_zone, order_index } = req.body;
+
+  // Check if coordinates changed
+  const oldStop = db.prepare('SELECT * FROM stops WHERE id = ?').get(id);
+  const coordsChanged = oldStop && (oldStop.lat !== lat || oldStop.lng !== lng);
+
+  db.prepare(`
+    UPDATE stops SET city=?, lat=?, lng=?, date=?, nights=?, type=?, note=?, is_start=?, is_end=?, fog_zone=?, order_index=?
+    WHERE id=?
+  `).run(city, lat, lng, date, nights || 0, type || 'normal', note || '', is_start ? 1 : 0, is_end ? 1 : 0, fog_zone ? 1 : 0, order_index || 0, id);
+
+  if (coordsChanged) {
+    invalidateRoutesForStop(id);
+  }
+
+  const updatedStop = db.prepare('SELECT * FROM stops WHERE id = ?').get(id);
+  io.emit('stops_updated');
+  res.json(updatedStop);
+});
+
+app.delete('/api/stops/:id', isAdmin, (req, res) => {
+  const { id } = req.params;
+  invalidateRoutesForStop(id);
+  db.prepare('DELETE FROM stops WHERE id = ?').run(id);
+  io.emit('stops_updated');
+  res.json({ success: true });
+});
+
+app.put('/api/stops/reorder', isAdmin, (req, res) => {
+  const { orderedIds } = req.body;
+  const updateOrder = db.prepare('UPDATE stops SET order_index = ? WHERE id = ?');
+
+  orderedIds.forEach((id, index) => {
+    updateOrder.run(index, id);
+  });
+
+  // Clear all routes since order affects route sequence
+  db.prepare('DELETE FROM route_segments').run();
+  io.emit('routes_invalidated');
+  io.emit('stops_updated');
+  res.json({ success: true });
+});
+
+// ============================================
+// API ROUTES - LIVE LOCATION
+// ============================================
+app.get('/api/location', isAuthenticated, (req, res) => {
+  const location = db.prepare('SELECT * FROM live_location WHERE id = 1').get();
+  res.json(location);
+});
+
+app.post('/api/location', isAdmin, async (req, res) => {
+  const { lat, lng, accuracy, speed, heading } = req.body;
+
+  db.prepare(`
+    UPDATE live_location SET lat=?, lng=?, accuracy=?, speed=?, heading=?, updated_at=datetime('now')
+    WHERE id=1
+  `).run(lat, lng, accuracy || null, speed || null, heading || null);
+
+  // Calculate live route to next destination
+  await updateLiveRoute(lat, lng);
+
+  io.emit('location_updated', { lat, lng, accuracy, speed, heading, updated_at: new Date().toISOString() });
+  res.json({ success: true });
+});
+
+// ============================================
+// API ROUTES - PHOTOS
+// ============================================
+app.get('/api/photos', isAuthenticated, (req, res) => {
+  const photos = db.prepare('SELECT * FROM photos ORDER BY uploaded_at DESC').all();
+  res.json(photos);
+});
+
+app.post('/api/photos', isAdmin, upload.single('photo'), async (req, res) => {
+  if (!req.file) {
+    return res.status(400).json({ error: 'No file uploaded' });
+  }
+
+  const { lat, lng, caption, stop_id } = req.body;
+  const photoId = uuidv4();
+
+  try {
+    // Compress and resize image (WhatsApp HD style)
+    const inputPath = req.file.path;
+    const outputPath = path.join('./uploads', req.file.filename);
+
+    await sharp(inputPath)
+      .resize(1920, 1920, {
+        fit: 'inside',
+        withoutEnlargement: true
+      })
+      .jpeg({
+        quality: 85,
+        progressive: true
+      })
+      .toFile(outputPath + '.tmp');
+
+    // Replace original with compressed version
+    fs.unlinkSync(inputPath);
+    fs.renameSync(outputPath + '.tmp', outputPath);
+
+    db.prepare(`
+      INSERT INTO photos (id, filename, original_name, lat, lng, caption, stop_id)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `).run(photoId, req.file.filename, req.file.originalname, lat || null, lng || null, caption || '', stop_id || null);
+
+    const photo = db.prepare('SELECT * FROM photos WHERE id = ?').get(photoId);
+
+    // Emit photo added event
+    io.emit('photo_added', photo);
+
+    // Emit notification event for viewers
+    io.emit('photo_uploaded_notification', {
+      caption: photo.caption || 'New photo uploaded',
+      filename: photo.filename,
+      timestamp: new Date().toISOString()
+    });
+
+    res.json(photo);
+  } catch (err) {
+    console.error('Photo compression error:', err);
+    // If compression fails, still save the original
+    const photo = {
+      id: photoId,
+      filename: req.file.filename,
+      original_name: req.file.originalname,
+      lat: lat || null,
+      lng: lng || null,
+      caption: caption || '',
+      stop_id: stop_id || null
+    };
+
+    db.prepare(`
+      INSERT INTO photos (id, filename, original_name, lat, lng, caption, stop_id)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `).run(photoId, req.file.filename, req.file.originalname, lat || null, lng || null, caption || '', stop_id || null);
+
+    io.emit('photo_added', photo);
+    io.emit('photo_uploaded_notification', {
+      caption: photo.caption || 'New photo uploaded',
+      filename: photo.filename,
+      timestamp: new Date().toISOString()
+    });
+
+    res.json(photo);
+  }
+});
+
+app.delete('/api/photos/:id', isAdmin, (req, res) => {
+  const { id } = req.params;
+  const photo = db.prepare('SELECT * FROM photos WHERE id = ?').get(id);
+  
+  if (photo) {
+    // Delete file
+    const filePath = path.join('./uploads', photo.filename);
+    if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
+    
+    db.prepare('DELETE FROM photos WHERE id = ?').run(id);
+    io.emit('photo_deleted', id);
+  }
+  
+  res.json({ success: true });
+});
+
+// ============================================
+// API ROUTES - USERS (Admin only)
+// ============================================
+app.get('/api/users', isAdmin, (req, res) => {
+  const users = db.prepare('SELECT id, email, name, picture, role, created_at FROM users').all();
+  res.json(users);
+});
+
+app.put('/api/users/:id/role', isAdmin, (req, res) => {
+  const { id } = req.params;
+  const { role } = req.body;
+  
+  if (!['viewer', 'pending', 'admin'].includes(role)) {
+    return res.status(400).json({ error: 'Invalid role' });
+  }
+
+  db.prepare('UPDATE users SET role = ? WHERE id = ?').run(role, id);
+  res.json({ success: true });
+});
+
+app.delete('/api/users/:id', isAdmin, (req, res) => {
+  const { id } = req.params;
+  
+  // Prevent self-deletion
+  if (req.user.id === id) {
+    return res.status(400).json({ error: 'Cannot delete yourself' });
+  }
+  
+  db.prepare('DELETE FROM users WHERE id = ?').run(id);
+  res.json({ success: true });
+});
+
+// ============================================
+// API ROUTES - DESTINATION INFO
+// ============================================
+const destinationInfo = {
+  "vizag": {
+    places: [
+      { name: "RK Beach & Kailasagiri", desc: "Sunrise at beach, ropeway to hilltop for panoramic views." },
+      { name: "Submarine Museum", desc: "Real submarine museum. Opens 2 PM." },
+      { name: "Araku Valley", desc: "3-hour drive through Eastern Ghats. Coffee plantations." }
+    ],
+    food: [
+      { name: "Muri Mixture", desc: "Iconic street snack - puffed rice with spicy chutneys." },
+      { name: "Punugulu", desc: "Deep-fried rice batter balls. Perfect evening snack." }
+    ],
+    foodTags: ["Muri Mixture", "Punugulu", "Seafood", "Gongura"]
+  },
+  "puri": {
+    places: [
+      { name: "Jagannath Temple", desc: "One of the Char Dhams. Non-Hindus cannot enter main shrine." },
+      { name: "Konark Sun Temple", desc: "UNESCO site 35 km away. Giant chariot architecture." }
+    ],
+    food: [
+      { name: "Mahaprasad", desc: "Sacred temple food - 56 items cooked without onion/garlic." },
+      { name: "Chenna Poda", desc: "Caramelized cottage cheese dessert." }
+    ],
+    foodTags: ["Mahaprasad", "Dalma", "Chenna Poda", "Rasagola"]
+  },
+  "kolkata": {
+    places: [
+      { name: "Victoria Memorial", desc: "Iconic white marble monument. Gardens open at sunrise." },
+      { name: "Howrah Bridge", desc: "Walk across at dawn, explore Mullick Ghat flower market." }
+    ],
+    food: [
+      { name: "Kathi Roll", desc: "Kolkata's gift to street food - kebabs in paratha." },
+      { name: "Phuchka", desc: "Bengal's tangier version of pani puri." }
+    ],
+    foodTags: ["Kathi Roll", "Phuchka", "Rosogolla", "Mishti Doi"]
+  },
+  "siliguri": {
+    places: [
+      { name: "Mahananda Wildlife Sanctuary", desc: "Morning safari - elephants, deer, birds." },
+      { name: "Hong Kong Market", desc: "Electronics and imported goods at bargain prices." }
+    ],
+    food: [
+      { name: "Momos", desc: "Tibetan dumplings everywhere! Steamed or fried." },
+      { name: "Thukpa", desc: "Hot noodle soup perfect for cooler weather." }
+    ],
+    foodTags: ["Momos", "Thukpa", "Darjeeling Tea", "Sel Roti"]
+  },
+  "phuentsholing": {
+    places: [
+      { name: "Bhutan Gate", desc: "Iconic colorful entry gate to Bhutan." },
+      { name: "Zangto Pelri Lhakhang", desc: "Beautiful temple - peaceful atmosphere." }
+    ],
+    food: [
+      { name: "Ema Datshi", desc: "National dish - spicy chilies in cheese. Very hot!" },
+      { name: "Red Rice", desc: "Nutty Bhutanese rice with meals." }
+    ],
+    foodTags: ["Ema Datshi", "Momos", "Red Rice", "Suja"]
+  },
+  "thimphu": {
+    places: [
+      { name: "Buddha Dordenma", desc: "Giant 169ft Buddha statue overlooking valley." },
+      { name: "Tashichho Dzong", desc: "Seat of government. Open after 5 PM weekdays." }
+    ],
+    food: [
+      { name: "Jasha Maru", desc: "Spicy minced chicken stew." },
+      { name: "Phaksha Paa", desc: "Pork with red chilies and radishes." }
+    ],
+    foodTags: ["Ema Datshi", "Jasha Maru", "Hoentay", "Ara"]
+  },
+  "paro": {
+    places: [
+      { name: "Tiger's Nest (Taktsang)", desc: "Iconic cliff monastery. 4-5 hour hike. Start by 7 AM!" },
+      { name: "Paro Dzong", desc: "Fortress monastery from 'Little Buddha' film." }
+    ],
+    food: [
+      { name: "Shakam Paa", desc: "Dried beef with chilies - mountain cuisine." },
+      { name: "Zow Shungo", desc: "Mixed vegetables with cheese sauce." }
+    ],
+    foodTags: ["Shakam Paa", "Ema Datshi", "Suja", "Local Ara"]
+  },
+  "patna": {
+    places: [
+      { name: "Golghar", desc: "Beehive-shaped granary. 145 steps for city view." },
+      { name: "Patna Museum", desc: "Buddha relics and Mauryan artifacts." }
+    ],
+    food: [
+      { name: "Litti Chokha", desc: "Bihari soul food - stuffed wheat balls." },
+      { name: "Sattu Paratha", desc: "Protein-rich roasted gram flour bread." }
+    ],
+    foodTags: ["Litti Chokha", "Sattu", "Thekua", "Khaja"]
+  },
+  "varanasi": {
+    places: [
+      { name: "Dashashwamedh Ghat", desc: "Famous Ganga Aarti at 6:30 PM. Arrive early!" },
+      { name: "Sunrise Boat Ride", desc: "Dawn boat ride along ghats. 5:30-7 AM." }
+    ],
+    food: [
+      { name: "Kachori Sabzi", desc: "Breakfast champion - crispy kachoris with spicy curry." },
+      { name: "Malaiyo", desc: "Winter special saffron milk foam. Dec-Feb mornings only!" }
+    ],
+    foodTags: ["Kachori", "Malaiyo", "Thandai", "Banarasi Paan"]
+  },
+  "bhedaghat": {
+    places: [
+      { name: "Marble Rocks Boat Ride", desc: "30-min ride between 100ft marble cliffs." },
+      { name: "Dhuandhar Falls", desc: "Smoky Falls - Narmada plunges 30m creating mist." }
+    ],
+    food: [
+      { name: "Dal Bafla", desc: "MP's dal baati - wheat balls in ghee and dal." },
+      { name: "Poha Jalebi", desc: "Classic MP breakfast combo." }
+    ],
+    foodTags: ["Dal Bafla", "Poha Jalebi", "Bhutte ka Kees"]
+  },
+  "indore": {
+    places: [
+      { name: "Sarafa Bazaar", desc: "India's famous food street - opens 8 PM after shops close!" },
+      { name: "Chappan Dukan", desc: "56 shops, diverse cuisines. Open all day." }
+    ],
+    food: [
+      { name: "Poha-Jalebi", desc: "Indore's iconic breakfast. Must have!" },
+      { name: "Garadu", desc: "Winter special fried yam. Dec-Feb only." }
+    ],
+    foodTags: ["Poha-Jalebi", "Garadu", "Bhutte ka Kees", "Shikanji"]
+  }
+};
+
+app.get('/api/destinations/:city', isAuthenticated, (req, res) => {
+  const city = req.params.city.toLowerCase();
+  const info = destinationInfo[city];
+  if (info) {
+    res.json(info);
+  } else {
+    res.status(404).json({ error: 'Destination info not found' });
+  }
+});
+
+// ============================================
+// API ROUTES - ROUTES
+// ============================================
+app.get('/api/routes', isAuthenticated, (req, res) => {
+  const routes = db.prepare(`
+    SELECT rs.*, s1.city as from_city, s2.city as to_city,
+           s1.order_index as from_order, s2.order_index as to_order
+    FROM route_segments rs
+    JOIN stops s1 ON rs.from_stop_id = s1.id
+    JOIN stops s2 ON rs.to_stop_id = s2.id
+    ORDER BY s1.order_index
+  `).all();
+
+  res.json(routes.map(r => ({
+    ...r,
+    geometry: JSON.parse(r.geometry),
+    bbox: r.bbox ? JSON.parse(r.bbox) : null
+  })));
+});
+
+app.get('/api/routes/live', isAuthenticated, (req, res) => {
+  const liveRoute = db.prepare(`
+    SELECT lr.*, s.city as to_city
+    FROM live_route_progress lr
+    LEFT JOIN stops s ON lr.to_stop_id = s.id
+    WHERE lr.id = 1
+  `).get();
+
+  if (!liveRoute || !liveRoute.is_active) {
+    return res.json({ active: false });
+  }
+
+  res.json({
+    active: true,
+    from: { lat: liveRoute.from_lat, lng: liveRoute.from_lng },
+    to_stop_id: liveRoute.to_stop_id,
+    to_city: liveRoute.to_city,
+    geometry: JSON.parse(liveRoute.geometry),
+    distance_meters: liveRoute.distance_meters,
+    duration_seconds: liveRoute.duration_seconds,
+    last_updated: liveRoute.last_updated
+  });
+});
+
+app.post('/api/routes/recalculate', isAdmin, async (req, res) => {
+  try {
+    const apiKey = process.env.OPENROUTE_API_KEY;
+    if (!apiKey) {
+      return res.status(400).json({ error: 'ORS API key not configured in .env' });
+    }
+
+    const ors = new ORSClient(apiKey);
+    const stops = db.prepare('SELECT * FROM stops ORDER BY order_index').all();
+
+    let calculated = 0;
+    let errors = [];
+
+    for (let i = 0; i < stops.length - 1; i++) {
+      const from = stops[i];
+      const to = stops[i + 1];
+
+      try {
+        const route = await ors.getRoute(from.lat, from.lng, to.lat, to.lng, 'driving-car');
+
+        db.prepare(`
+          INSERT OR REPLACE INTO route_segments
+            (from_stop_id, to_stop_id, geometry, distance_meters, duration_seconds, bbox, updated_at)
+          VALUES (?, ?, ?, ?, ?, ?, datetime('now'))
+        `).run(from.id, to.id, JSON.stringify(route.geometry), route.distance, route.duration, JSON.stringify(route.bbox));
+
+        calculated++;
+      } catch (err) {
+        errors.push(`${from.city} → ${to.city}: ${err.message}`);
+      }
+    }
+
+    io.emit('routes_updated');
+    res.json({ success: true, calculated, total: stops.length - 1, errors });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ============================================
+// SOCKET.IO
+// ============================================
+io.on('connection', (socket) => {
+  console.log('Client connected:', socket.id);
+  
+  socket.on('disconnect', () => {
+    console.log('Client disconnected:', socket.id);
+  });
+});
+
+// ============================================
+// SERVE FRONTEND
+// ============================================
+app.get('/', (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'index.html'));
+});
+
+app.get('/admin', (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'admin.html'));
+});
+
+// ============================================
+// START SERVER
+// ============================================
+httpServer.listen(PORT, () => {
+  console.log(`
+╔════════════════════════════════════════════════════════════╗
+║              🏍️ Road Trip Tracker Server 🗺️                 ║
+╠════════════════════════════════════════════════════════════╣
+║  Server running at: ${BASE_URL.padEnd(36)} ║
+║  Admin panel: ${(BASE_URL + '/admin').padEnd(42)} ║
+╠════════════════════════════════════════════════════════════╣
+║  ${process.env.GOOGLE_CLIENT_ID ? '✅ Google OAuth configured' : '⚠️  Google OAuth NOT configured (check .env)'}                          ║
+╚════════════════════════════════════════════════════════════╝
+  `);
+});
