@@ -308,9 +308,13 @@
             </div>
             <div class="photo-upload-area" id="uploadArea">
                 <p style="font-size: 2rem; margin-bottom: 10px;">📷</p>
-                <p>Drag & drop photos here or click to select</p>
+                <p>Drag & drop photos/videos here or click to select</p>
                 <p style="font-size: 0.8rem; color: var(--text-muted); margin-top: 10px;">Max 100MB per file • Images: JPG, PNG, GIF, WebP • Videos: MP4, MOV, WebM</p>
                 <input type="file" id="photoInput" accept="image/*,video/*" multiple style="display:none">
+            </div>
+            <div id="uploadProgress" style="display:none; margin: 20px 0; padding: 15px; background: var(--bg-secondary); border-radius: 8px;">
+                <p style="margin: 0; color: var(--accent-green);">⏳ Uploading and compressing...</p>
+                <p id="uploadStatus" style="margin: 5px 0 0 0; font-size: 0.9rem; color: var(--text-muted);"></p>
             </div>
             <div class="photo-grid" id="photosContainer"></div>
         </div>
@@ -739,6 +743,10 @@
         async function uploadPhoto() {
             if (!currentPhotoFile) return;
 
+            const isVideo = /video/.test(currentPhotoFile.type);
+            const uploadProgress = document.getElementById('uploadProgress');
+            const uploadStatus = document.getElementById('uploadStatus');
+
             const formData = new FormData();
             formData.append('photo', currentPhotoFile);
             formData.append('lat', document.getElementById('photoLat').value || '');
@@ -747,11 +755,29 @@
             formData.append('stop_id', document.getElementById('photoStopId').value);
 
             try {
-                await fetch('/api/photos', { method: 'POST', body: formData });
                 closePhotoModal();
-                loadData();
+                uploadProgress.style.display = 'block';
+                uploadStatus.textContent = isVideo
+                    ? 'Compressing video to 720p... This may take a minute.'
+                    : 'Processing image...';
+
+                const response = await fetch('/api/photos', {
+                    method: 'POST',
+                    body: formData
+                });
+
+                if (!response.ok) {
+                    throw new Error(`Upload failed: ${response.statusText}`);
+                }
+
+                const result = await response.json();
+                uploadProgress.style.display = 'none';
+                await loadData();
+                console.log('Upload successful:', result);
             } catch (err) {
-                alert('Failed to upload photo');
+                console.error('Upload error:', err);
+                uploadProgress.style.display = 'none';
+                alert(`Failed to upload ${isVideo ? 'video' : 'photo'}: ${err.message}`);
             }
         }
 
