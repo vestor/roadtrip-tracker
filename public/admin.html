@@ -766,7 +766,8 @@
             if (loc && loc.lat && loc.lng) {
                 document.getElementById('locationText').textContent = 'Location sharing is active';
                 document.getElementById('locationCoords').textContent = `${loc.lat.toFixed(6)}, ${loc.lng.toFixed(6)}`;
-                document.getElementById('locationTime').textContent = `Last updated: ${new Date(loc.updated_at).toLocaleString()}`;
+                // SQLite returns UTC timestamps, append 'Z' for proper timezone parsing
+                document.getElementById('locationTime').textContent = `Last updated: ${new Date(loc.updated_at + 'Z').toLocaleString()}`;
             }
         }
 
