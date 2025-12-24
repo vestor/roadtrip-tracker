@@ -452,11 +452,11 @@
         </div>
     </div>
 
-    <!-- Photo Modal -->
+    <!-- Photo/Video Modal -->
     <div class="modal-overlay" id="photoModal">
         <div class="photo-modal">
             <button class="modal-close" onclick="closePhotoModal()">×</button>
-            <img id="modalPhoto" src="" alt="">
+            <div id="modalMediaContainer"></div>
             <p class="photo-modal-caption" id="modalCaption"></p>
         </div>
     </div>
@@ -638,8 +638,12 @@
             photos.forEach(photo => {
                 const card = document.createElement('div');
                 card.className = 'photo-card';
+                const isVideo = /\.(mp4|mov|avi|webm|mkv)$/i.test(photo.filename);
                 card.innerHTML = `
-                    <img src="/uploads/${photo.filename}" alt="${photo.caption || 'Trip photo'}">
+                    ${isVideo
+                        ? `<video src="/uploads/${photo.filename}" controls playsinline muted loop style="width:100%;border-radius:8px"></video>`
+                        : `<img src="/uploads/${photo.filename}" alt="${photo.caption || 'Trip photo'}">`
+                    }
                     ${photo.caption ? `<div class="photo-caption">${photo.caption}</div>` : ''}
                 `;
                 card.addEventListener('click', () => openPhotoModal(photo));
@@ -717,16 +721,21 @@
                 map.fitBounds(bounds, { padding: [30, 30] });
             }
 
-            // Add photo markers
+            // Add photo/video markers
             photos.filter(p => p.lat && p.lng).forEach(photo => {
+                const isVideo = /\.(mp4|mov|avi|webm|mkv)$/i.test(photo.filename);
+                const mediaHtml = isVideo
+                    ? `<video src="/uploads/${photo.filename}" controls playsinline muted style="width:150px;border-radius:4px"></video>`
+                    : `<img src="/uploads/${photo.filename}" style="width:150px;border-radius:4px">`;
+
                 L.marker([photo.lat, photo.lng], {
                     icon: L.divIcon({
                         className: 'photo-marker',
-                        html: '<div style="width:20px;height:20px;background:var(--accent-pink);border:2px solid white;border-radius:4px;display:flex;align-items:center;justify-content:center;font-size:10px;">📷</div>',
+                        html: `<div style="width:20px;height:20px;background:var(--accent-pink);border:2px solid white;border-radius:4px;display:flex;align-items:center;justify-content:center;font-size:10px;">${isVideo ? '🎥' : '📷'}</div>`,
                         iconSize: [20, 20],
                         iconAnchor: [10, 10]
                     })
-                }).addTo(map).bindPopup(`<img src="/uploads/${photo.filename}" style="width:150px;border-radius:4px"><br><small>${photo.caption || ''}</small>`);
+                }).addTo(map).bindPopup(`${mediaHtml}<br><small>${photo.caption || ''}</small>`);
             });
         }
 
@@ -837,7 +846,15 @@
         }
 
         function openPhotoModal(photo) {
-            document.getElementById('modalPhoto').src = `/uploads/${photo.filename}`;
+            const container = document.getElementById('modalMediaContainer');
+            const isVideo = /\.(mp4|mov|avi|webm|mkv)$/i.test(photo.filename);
+
+            if (isVideo) {
+                container.innerHTML = `<video src="/uploads/${photo.filename}" controls autoplay style="max-width:100%;max-height:80vh;border-radius:8px"></video>`;
+            } else {
+                container.innerHTML = `<img id="modalPhoto" src="/uploads/${photo.filename}" alt="" style="max-width:100%;max-height:80vh;border-radius:8px">`;
+            }
+
             document.getElementById('modalCaption').textContent = photo.caption || '';
             document.getElementById('photoModal').classList.add('active');
         }
