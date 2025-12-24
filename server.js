@@ -22,15 +22,24 @@ const PORT = process.env.PORT || 3000;
 const BASE_URL = process.env.BASE_URL || `http://localhost:${PORT}`;
 
 // ============================================
+// PERSISTENT DATA CONFIGURATION
+// ============================================
+// On Render: /var/data (persistent disk mount)
+// Local dev: ./data (for development)
+const DATA_DIR = process.env.DATA_DIR || (process.env.NODE_ENV === 'production' ? '/var/data' : './data');
+const UPLOADS_DIR = path.join(DATA_DIR, 'uploads');
+const DB_PATH = path.join(DATA_DIR, 'roadtrip.db');
+
+// ============================================
 // ENSURE DIRECTORIES EXIST
 // ============================================
-if (!fs.existsSync('./data')) fs.mkdirSync('./data', { recursive: true });
-if (!fs.existsSync('./uploads')) fs.mkdirSync('./uploads', { recursive: true });
+if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
+if (!fs.existsSync(UPLOADS_DIR)) fs.mkdirSync(UPLOADS_DIR, { recursive: true });
 
 // ============================================
 // DATABASE SETUP
 // ============================================
-const db = new Database('./data/roadtrip.db');
+const db = new Database(DB_PATH);
 
 // Initialize database tables
 db.exec(`
@@ -178,7 +187,7 @@ app.set('trust proxy', 1);
 
 app.use(express.json());
 app.use(express.static('public'));
-app.use('/uploads', express.static('uploads'));
+app.use('/uploads', express.static(UPLOADS_DIR));
 
 // Session configuration with persistent SQLite storage
 app.use(session({
@@ -346,9 +355,8 @@ function invalidateRoutesForStop(stopId) {
 // ============================================
 const storage = multer.diskStorage({
   destination: (req, file, cb) => {
-    const uploadDir = './uploads';
-    if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir, { recursive: true });
-    cb(null, uploadDir);
+    if (!fs.existsSync(UPLOADS_DIR)) fs.mkdirSync(UPLOADS_DIR, { recursive: true });
+    cb(null, UPLOADS_DIR);
   },
   filename: (req, file, cb) => {
     const uniqueName = `${Date.now()}-${uuidv4()}${path.extname(file.originalname)}`;
@@ -516,7 +524,7 @@ app.post('/api/photos', isAdmin, upload.single('photo'), async (req, res) => {
   try {
     // Compress and resize image (WhatsApp HD style)
     const inputPath = req.file.path;
-    const outputPath = path.join('./uploads', req.file.filename);
+    const outputPath = path.join(UPLOADS_DIR, req.file.filename);
 
     await sharp(inputPath)
       .resize(1920, 1920, {
@@ -586,7 +594,7 @@ app.delete('/api/photos/:id', isAdmin, (req, res) => {
   
   if (photo) {
     // Delete file
-    const filePath = path.join('./uploads', photo.filename);
+    const filePath = path.join(UPLOADS_DIR, photo.filename);
     if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
     
     db.prepare('DELETE FROM photos WHERE id = ?').run(id);

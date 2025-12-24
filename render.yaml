@@ -20,11 +20,9 @@ services:
         sync: false
       - key: OPENROUTE_API_KEY
         sync: false
-    # Persistent disk configuration - CRITICAL for data persistence
-    # Stores SQLite database with sessions and all app data
-    # NOTE: On free tier, only 1 disk allowed. Uploads are stored here too.
-    # Mount at project root to persist both ./data and ./uploads directories
+    # Persistent disk configuration - ALL data stored here
+    # Includes: SQLite database, sessions, and uploaded photos
     disk:
       name: roadtrip-data
-      mountPath: /opt/render/project/src/data
-      sizeGB: 1
+      mountPath: /var/data
+      sizeGB: 5
