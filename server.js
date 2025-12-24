@@ -306,11 +306,12 @@ function haversineDistance(lat1, lng1, lat2, lng2) {
 function findNextStop(currentLat, currentLng, stops) {
   const ARRIVAL_THRESHOLD_KM = 5;
 
-  // Strategy: Find the FIRST stop in sequence that we haven't arrived at yet
-  // Skip the start point if it's marked as is_start=1
-  for (const stop of stops) {
-    // Skip start point - you've already left from there
-    if (stop.is_start === 1) continue;
+  // Simple: First stop in order = start (skip it), find next unvisited
+  for (let i = 0; i < stops.length; i++) {
+    const stop = stops[i];
+
+    // Skip first stop (start point - already left from there)
+    if (i === 0) continue;
 
     const distance = haversineDistance(currentLat, currentLng, stop.lat, stop.lng);
 
@@ -318,7 +319,7 @@ function findNextStop(currentLat, currentLng, stops) {
     if (distance > ARRIVAL_THRESHOLD_KM) {
       return stop;
     }
-    // If within 5km, you've arrived - check next stop in sequence
+    // If within 5km, you've arrived - check next stop
   }
 
   return null; // All stops visited!

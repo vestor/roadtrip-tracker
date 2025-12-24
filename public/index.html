@@ -409,7 +409,7 @@
                 <div class="stat-value" id="totalDays">—</div>
                 <div class="stat-label">Days</div>
             </div>
-            <div class="stat">
+            <div class="stat" onclick="scrollToPhotos()" style="cursor: pointer;" title="Click to view photos">
                 <div class="stat-value" id="totalPhotos">0</div>
                 <div class="stat-label">Photos</div>
             </div>
@@ -861,6 +861,13 @@
 
         function closePhotoModal() {
             document.getElementById('photoModal').classList.remove('active');
+        }
+
+        function scrollToPhotos() {
+            const photosSection = document.querySelector('.photos-section');
+            if (photosSection) {
+                photosSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            }
         }
 
         function haversineDistance(lat1, lng1, lat2, lng2) {
