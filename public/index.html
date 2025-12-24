@@ -754,7 +754,8 @@
 
         function updateLiveLocation(loc) {
             document.getElementById('liveBanner').style.display = 'flex';
-            document.getElementById('liveLocationText').textContent = `Updated: ${new Date(loc.updated_at).toLocaleTimeString()}`;
+            // SQLite returns UTC timestamps, append 'Z' for proper timezone parsing
+            document.getElementById('liveLocationText').textContent = `Updated: ${new Date(loc.updated_at + 'Z').toLocaleTimeString()}`;
 
             if (liveMarker) {
                 liveMarker.setLatLng([loc.lat, loc.lng]);
