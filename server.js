@@ -305,13 +305,23 @@ function haversineDistance(lat1, lng1, lat2, lng2) {
 
 function findNextStop(currentLat, currentLng, stops) {
   const ARRIVAL_THRESHOLD_KM = 5;
+
+  // Strategy: Find the FIRST stop in sequence that we haven't arrived at yet
+  // Skip the start point if it's marked as is_start=1
   for (const stop of stops) {
+    // Skip start point - you've already left from there
+    if (stop.is_start === 1) continue;
+
     const distance = haversineDistance(currentLat, currentLng, stop.lat, stop.lng);
+
+    // If far from this stop (>5km), it's your next destination
     if (distance > ARRIVAL_THRESHOLD_KM) {
       return stop;
     }
+    // If within 5km, you've arrived - check next stop in sequence
   }
-  return null;
+
+  return null; // All stops visited!
 }
 
 async function updateLiveRoute(currentLat, currentLng) {
@@ -509,6 +519,17 @@ app.post('/api/location', isAdmin, async (req, res) => {
   await updateLiveRoute(lat, lng);
 
   io.emit('location_updated', { lat, lng, accuracy, speed, heading, updated_at: new Date().toISOString() });
+  res.json({ success: true });
+});
+
+// Stop live location and route tracking
+app.post('/api/location/stop', isAdmin, (req, res) => {
+  // Deactivate live route
+  db.prepare('UPDATE live_route_progress SET is_active = 0 WHERE id = 1').run();
+
+  // Broadcast that live route is now inactive
+  io.emit('live_route_updated', { active: false });
+
   res.json({ success: true });
 });
 

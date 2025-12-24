@@ -816,11 +816,22 @@
             );
         }
 
-        function stopLocationSharing() {
+        async function stopLocationSharing() {
             if (locationWatchId) {
                 navigator.geolocation.clearWatch(locationWatchId);
                 locationWatchId = null;
             }
+
+            // Deactivate live route on server
+            try {
+                await fetch('/api/location/stop', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' }
+                });
+            } catch (err) {
+                console.error('Failed to stop live route:', err);
+            }
+
             document.getElementById('startLocationBtn').classList.remove('hidden');
             document.getElementById('stopLocationBtn').classList.add('hidden');
             document.getElementById('locationText').textContent = 'Location sharing is paused';
