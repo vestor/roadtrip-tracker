@@ -1,0 +1,30 @@
+services:
+  - type: web
+    name: roadtrip-tracker
+    runtime: node
+    plan: free
+    buildCommand: npm install
+    startCommand: npm start
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: BASE_URL
+        sync: false
+      - key: SESSION_SECRET
+        generateValue: true
+      - key: GOOGLE_CLIENT_ID
+        sync: false
+      - key: GOOGLE_CLIENT_SECRET
+        sync: false
+      - key: OPENWEATHER_API_KEY
+        sync: false
+      - key: OPENROUTE_API_KEY
+        sync: false
+    # Persistent disk configuration - CRITICAL for data persistence
+    # Stores SQLite database with sessions and all app data
+    # NOTE: On free tier, only 1 disk allowed. Uploads are stored here too.
+    # Mount at project root to persist both ./data and ./uploads directories
+    disk:
+      name: roadtrip-data
+      mountPath: /opt/render/project/src/data
+      sizeGB: 1

@@ -1,6 +1,7 @@
 require('dotenv').config();
 const express = require('express');
 const session = require('express-session');
+const SqliteStore = require('better-sqlite3-session-store')(session);
 const passport = require('passport');
 const GoogleStrategy = require('passport-google-oauth20').Strategy;
 const { createServer } = require('http');
@@ -179,8 +180,15 @@ app.use(express.json());
 app.use(express.static('public'));
 app.use('/uploads', express.static('uploads'));
 
-// Session configuration
+// Session configuration with persistent SQLite storage
 app.use(session({
+  store: new SqliteStore({
+    client: db,
+    expired: {
+      clear: true,
+      intervalMs: 900000 // Clear expired sessions every 15 minutes
+    }
+  }),
   secret: process.env.SESSION_SECRET || 'roadtrip-secret-change-this-in-production',
   resave: false,
   saveUninitialized: false,
