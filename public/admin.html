@@ -309,8 +309,8 @@
             <div class="photo-upload-area" id="uploadArea">
                 <p style="font-size: 2rem; margin-bottom: 10px;">📷</p>
                 <p>Drag & drop photos here or click to select</p>
-                <p style="font-size: 0.8rem; color: var(--text-muted); margin-top: 10px;">Max 10MB per image • JPG, PNG, GIF, WebP</p>
-                <input type="file" id="photoInput" accept="image/*" multiple style="display:none">
+                <p style="font-size: 0.8rem; color: var(--text-muted); margin-top: 10px;">Max 100MB per file • Images: JPG, PNG, GIF, WebP • Videos: MP4, MOV, WebM</p>
+                <input type="file" id="photoInput" accept="image/*,video/*" multiple style="display:none">
             </div>
             <div class="photo-grid" id="photosContainer"></div>
         </div>
@@ -568,8 +568,12 @@
             photos.forEach(photo => {
                 const card = document.createElement('div');
                 card.className = 'photo-card';
+                const isVideo = /\.(mp4|mov|avi|webm|mkv)$/i.test(photo.filename);
                 card.innerHTML = `
-                    <img src="/uploads/${photo.filename}" alt="${photo.caption || ''}">
+                    ${isVideo
+                        ? `<video src="/uploads/${photo.filename}" controls playsinline muted loop style="width:100%;border-radius:4px"></video>`
+                        : `<img src="/uploads/${photo.filename}" alt="${photo.caption || ''}">`
+                    }
                     <button class="delete-btn" onclick="deletePhoto('${photo.id}')">×</button>
                 `;
                 container.appendChild(card);

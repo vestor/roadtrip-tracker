@@ -13,6 +13,12 @@ const { v4: uuidv4 } = require('uuid');
 const Database = require('better-sqlite3');
 const ORSClient = require('./lib/ors-client');
 const sharp = require('sharp');
+const exifr = require('exifr');
+const ffmpeg = require('fluent-ffmpeg');
+const ffmpegPath = require('@ffmpeg-installer/ffmpeg').path;
+
+// Configure ffmpeg
+ffmpeg.setFfmpegPath(ffmpegPath);
 
 const app = express();
 const httpServer = createServer(app);
@@ -366,15 +372,16 @@ const storage = multer.diskStorage({
 
 const upload = multer({
   storage,
-  limits: { fileSize: 10 * 1024 * 1024 }, // 10MB
+  limits: { fileSize: 100 * 1024 * 1024 }, // 100MB for videos
   fileFilter: (req, file, cb) => {
-    const allowedTypes = /jpeg|jpg|png|gif|webp/;
+    // Allow images and videos
+    const allowedTypes = /jpeg|jpg|png|gif|webp|mp4|mov|avi|webm|mkv/;
     const extname = allowedTypes.test(path.extname(file.originalname).toLowerCase());
-    const mimetype = allowedTypes.test(file.mimetype);
+    const mimetype = /^(image|video)\//.test(file.mimetype);
     if (extname && mimetype) {
       return cb(null, true);
     }
-    cb(new Error('Only images are allowed'));
+    cb(new Error('Only images and videos are allowed'));
   }
 });
 
@@ -518,29 +525,72 @@ app.post('/api/photos', isAdmin, upload.single('photo'), async (req, res) => {
     return res.status(400).json({ error: 'No file uploaded' });
   }
 
-  const { lat, lng, caption, stop_id } = req.body;
+  let { lat, lng, caption, stop_id } = req.body;
   const photoId = uuidv4();
+  const inputPath = req.file.path;
+  const outputPath = path.join(UPLOADS_DIR, req.file.filename);
+  const isVideo = req.file.mimetype.startsWith('video/');
 
   try {
-    // Compress and resize image (WhatsApp HD style)
-    const inputPath = req.file.path;
-    const outputPath = path.join(UPLOADS_DIR, req.file.filename);
+    // Extract GPS from EXIF data if it's an image and no manual location provided
+    if (!isVideo && (!lat || !lng)) {
+      try {
+        const exifData = await exifr.parse(inputPath, { gps: true });
+        if (exifData && exifData.latitude && exifData.longitude) {
+          lat = lat || exifData.latitude;
+          lng = lng || exifData.longitude;
+          console.log('Extracted GPS from EXIF:', { lat, lng });
+        }
+      } catch (exifError) {
+        console.log('No EXIF GPS data found or error reading EXIF:', exifError.message);
+      }
+    }
 
-    await sharp(inputPath)
-      .resize(1920, 1920, {
-        fit: 'inside',
-        withoutEnlargement: true
-      })
-      .jpeg({
-        quality: 85,
-        progressive: true
-      })
-      .toFile(outputPath + '.tmp');
+    if (isVideo) {
+      // Compress video (WhatsApp style: 720p, lower bitrate)
+      await new Promise((resolve, reject) => {
+        ffmpeg(inputPath)
+          .outputOptions([
+            '-c:v libx264',           // H.264 codec
+            '-preset medium',         // Encoding speed/quality balance
+            '-crf 28',               // Quality (23-28 is good, higher = smaller file)
+            '-vf scale=-2:720',      // Scale to 720p height, maintain aspect ratio
+            '-c:a aac',              // AAC audio codec
+            '-b:a 128k',             // Audio bitrate
+            '-movflags +faststart'   // Enable fast start for web playback
+          ])
+          .output(outputPath + '.tmp')
+          .on('end', () => {
+            // Replace original with compressed version
+            fs.unlinkSync(inputPath);
+            fs.renameSync(outputPath + '.tmp', outputPath);
+            resolve();
+          })
+          .on('error', (err) => {
+            console.error('Video compression error:', err);
+            reject(err);
+          })
+          .run();
+      });
+    } else {
+      // Compress and resize image (WhatsApp HD style)
+      await sharp(inputPath)
+        .resize(1920, 1920, {
+          fit: 'inside',
+          withoutEnlargement: true
+        })
+        .jpeg({
+          quality: 85,
+          progressive: true
+        })
+        .toFile(outputPath + '.tmp');
 
-    // Replace original with compressed version
-    fs.unlinkSync(inputPath);
-    fs.renameSync(outputPath + '.tmp', outputPath);
+      // Replace original with compressed version
+      fs.unlinkSync(inputPath);
+      fs.renameSync(outputPath + '.tmp', outputPath);
+    }
 
+    // Save to database
     db.prepare(`
       INSERT INTO photos (id, filename, original_name, lat, lng, caption, stop_id)
       VALUES (?, ?, ?, ?, ?, ?, ?)
@@ -548,38 +598,29 @@ app.post('/api/photos', isAdmin, upload.single('photo'), async (req, res) => {
 
     const photo = db.prepare('SELECT * FROM photos WHERE id = ?').get(photoId);
 
-    // Emit photo added event
+    // Emit events
     io.emit('photo_added', photo);
-
-    // Emit notification event for viewers
     io.emit('photo_uploaded_notification', {
-      caption: photo.caption || 'New photo uploaded',
+      caption: photo.caption || (isVideo ? 'New video uploaded' : 'New photo uploaded'),
       filename: photo.filename,
       timestamp: new Date().toISOString()
     });
 
     res.json(photo);
   } catch (err) {
-    console.error('Photo compression error:', err);
-    // If compression fails, still save the original
-    const photo = {
-      id: photoId,
-      filename: req.file.filename,
-      original_name: req.file.originalname,
-      lat: lat || null,
-      lng: lng || null,
-      caption: caption || '',
-      stop_id: stop_id || null
-    };
+    console.error('Media processing error:', err);
 
+    // If processing fails, save the original file
     db.prepare(`
       INSERT INTO photos (id, filename, original_name, lat, lng, caption, stop_id)
       VALUES (?, ?, ?, ?, ?, ?, ?)
     `).run(photoId, req.file.filename, req.file.originalname, lat || null, lng || null, caption || '', stop_id || null);
 
+    const photo = db.prepare('SELECT * FROM photos WHERE id = ?').get(photoId);
+
     io.emit('photo_added', photo);
     io.emit('photo_uploaded_notification', {
-      caption: photo.caption || 'New photo uploaded',
+      caption: photo.caption || 'New media uploaded',
       filename: photo.filename,
       timestamp: new Date().toISOString()
     });
