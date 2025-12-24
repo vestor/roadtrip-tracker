@@ -172,6 +172,9 @@ if (!liveRouteCheck) {
 // ============================================
 // MIDDLEWARE
 // ============================================
+// Trust proxy - required for secure cookies behind reverse proxies (Render, Heroku, etc.)
+app.set('trust proxy', 1);
+
 app.use(express.json());
 app.use(express.static('public'));
 app.use('/uploads', express.static('uploads'));
