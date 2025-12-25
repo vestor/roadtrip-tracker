@@ -415,7 +415,7 @@
             </div>
         </div>
 
-        <div class="live-location-banner" id="liveBanner" style="display:none">
+        <div class="live-location-banner" id="liveBanner" style="display:none; cursor: pointer;" onclick="scrollToMap()" title="Click to view on map">
             <div class="live-dot"></div>
             <span>📍 Live Location Active</span>
             <small id="liveLocationText"></small>
@@ -789,7 +789,7 @@
         function showCurrentLegBanner(toCity, distanceMeters, durationSeconds) {
             const banner = document.getElementById('currentLegBanner');
             if (banner) {
-                document.getElementById('legRoute').textContent = `Currently: → ${toCity}`;
+                document.getElementById('legRoute').textContent = `Currently: Enroute ${toCity}`;
                 document.getElementById('legDetails').textContent =
                     `${(distanceMeters / 1000).toFixed(1)} km remaining • ETA: ${formatDuration(durationSeconds)}`;
                 banner.style.display = 'flex';
@@ -867,6 +867,13 @@
             const photosSection = document.querySelector('.photos-section');
             if (photosSection) {
                 photosSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            }
+        }
+
+        function scrollToMap() {
+            const mapSection = document.querySelector('.map-section');
+            if (mapSection) {
+                mapSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
             }
         }
 
