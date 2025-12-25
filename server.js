@@ -129,15 +129,45 @@ db.exec(`
     distance_meters INTEGER,
     duration_seconds INTEGER,
     is_active INTEGER DEFAULT 0,
+    resting_for_night INTEGER DEFAULT 0,
+    resting_location TEXT,
     last_updated DATETIME DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (to_stop_id) REFERENCES stops(id) ON DELETE SET NULL,
     FOREIGN KEY (next_stop_id) REFERENCES stops(id) ON DELETE SET NULL
   );
+
+  CREATE TABLE IF NOT EXISTS user_analytics (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id TEXT NOT NULL,
+    session_id TEXT NOT NULL,
+    connected_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    disconnected_at DATETIME,
+    is_online INTEGER DEFAULT 1,
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_user_analytics_user
+    ON user_analytics(user_id, connected_at);
+
+  CREATE INDEX IF NOT EXISTS idx_user_analytics_online
+    ON user_analytics(user_id, is_online);
 `);
 
-// Migration: Add next_stop_id to existing live_route_progress table
+// Migrations: Add new columns to existing live_route_progress table
 try {
   db.prepare('ALTER TABLE live_route_progress ADD COLUMN next_stop_id INTEGER REFERENCES stops(id) ON DELETE SET NULL').run();
+} catch (e) {
+  // Column already exists, ignore
+}
+
+try {
+  db.prepare('ALTER TABLE live_route_progress ADD COLUMN resting_for_night INTEGER DEFAULT 0').run();
+} catch (e) {
+  // Column already exists, ignore
+}
+
+try {
+  db.prepare('ALTER TABLE live_route_progress ADD COLUMN resting_location TEXT').run();
 } catch (e) {
   // Column already exists, ignore
 }
@@ -620,6 +650,42 @@ app.post('/api/location/set-next-stop', isAdmin, async (req, res) => {
   res.json({ success: true, next_stop: stop });
 });
 
+// Start resting for the night
+app.post('/api/location/rest', isAdmin, (req, res) => {
+  const { location_name } = req.body;
+
+  // Set resting status
+  db.prepare('UPDATE live_route_progress SET resting_for_night = 1, resting_location = ?, is_active = 0 WHERE id = 1')
+    .run(location_name || 'Unknown Location');
+
+  io.emit('resting_status_changed', { resting: true, location: location_name });
+  res.json({ success: true });
+});
+
+// Resume travel (stop resting)
+app.post('/api/location/resume', isAdmin, async (req, res) => {
+  // Clear resting status
+  db.prepare('UPDATE live_route_progress SET resting_for_night = 0, resting_location = NULL WHERE id = 1').run();
+
+  // Recalculate route if location is available
+  const location = db.prepare('SELECT * FROM live_location WHERE id = 1').get();
+  if (location && location.lat && location.lng) {
+    await updateLiveRoute(location.lat, location.lng);
+  }
+
+  io.emit('resting_status_changed', { resting: false });
+  res.json({ success: true });
+});
+
+// Get resting status
+app.get('/api/location/resting', isAuthenticated, (req, res) => {
+  const progress = db.prepare('SELECT resting_for_night, resting_location FROM live_route_progress WHERE id = 1').get();
+  res.json({
+    resting: progress?.resting_for_night === 1,
+    location: progress?.resting_location
+  });
+});
+
 // ============================================
 // API ROUTES - PHOTOS
 // ============================================
@@ -800,7 +866,38 @@ app.delete('/api/photos/:id', isAdmin, (req, res) => {
 // ============================================
 app.get('/api/users', isAdmin, (req, res) => {
   const users = db.prepare('SELECT id, email, name, picture, role, created_at FROM users').all();
-  res.json(users);
+
+  // Enhance with analytics data
+  const usersWithAnalytics = users.map(user => {
+    // Check if user is currently online
+    const onlineCheck = db.prepare(`
+      SELECT COUNT(*) as count FROM user_analytics
+      WHERE user_id = ? AND is_online = 1
+    `).get(user.id);
+    const isOnline = onlineCheck.count > 0;
+
+    // Count today's page opens
+    const todayCount = db.prepare(`
+      SELECT COUNT(*) as count FROM user_analytics
+      WHERE user_id = ?
+        AND DATE(connected_at) = DATE('now')
+    `).get(user.id);
+
+    // Get last activity
+    const lastActivity = db.prepare(`
+      SELECT MAX(connected_at) as last_active FROM user_analytics
+      WHERE user_id = ?
+    `).get(user.id);
+
+    return {
+      ...user,
+      is_online: isOnline,
+      today_views: todayCount.count,
+      last_active: lastActivity?.last_active
+    };
+  });
+
+  res.json(usersWithAnalytics);
 });
 
 app.put('/api/users/:id/role', isAdmin, (req, res) => {
@@ -1053,9 +1150,49 @@ app.post('/api/routes/recalculate', isAdmin, async (req, res) => {
 // ============================================
 io.on('connection', (socket) => {
   console.log('Client connected:', socket.id);
-  
+
+  // Track user analytics if authenticated
+  const user = socket.request.session?.passport?.user;
+  if (user) {
+    const userId = user.id || user;
+    const sessionId = socket.id;
+
+    try {
+      // Insert new session record
+      db.prepare(`
+        INSERT INTO user_analytics (user_id, session_id, connected_at, is_online)
+        VALUES (?, ?, datetime('now'), 1)
+      `).run(userId, sessionId);
+
+      console.log(`User ${userId} connected (session: ${sessionId})`);
+
+      // Broadcast analytics update to admins
+      io.emit('analytics_updated');
+    } catch (err) {
+      console.error('Failed to track user connection:', err);
+    }
+  }
+
   socket.on('disconnect', () => {
     console.log('Client disconnected:', socket.id);
+
+    // Mark user as offline
+    if (user) {
+      try {
+        db.prepare(`
+          UPDATE user_analytics
+          SET disconnected_at = datetime('now'), is_online = 0
+          WHERE session_id = ? AND is_online = 1
+        `).run(socket.id);
+
+        console.log(`User ${user.id || user} disconnected (session: ${socket.id})`);
+
+        // Broadcast analytics update to admins
+        io.emit('analytics_updated');
+      } catch (err) {
+        console.error('Failed to track user disconnection:', err);
+      }
+    }
   });
 });
 

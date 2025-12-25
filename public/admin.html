@@ -383,6 +383,26 @@
                 </div>
                 <p id="nextStopStatus" style="margin-top: 10px; font-size: 0.85rem; color: var(--text-muted);"></p>
             </div>
+
+            <div class="location-section" style="margin-top: 30px;">
+                <h3 style="margin-bottom: 15px;">🌙 Resting for the Night</h3>
+                <p style="font-size: 0.9rem; color: var(--text-secondary); margin-bottom: 15px;">
+                    Mark when you've stopped for the night. The live route will change to "Currently: Resting for the Night".
+                </p>
+                <div id="restingControls">
+                    <div class="form-group">
+                        <label class="form-label">Current Location Name</label>
+                        <input type="text" id="restingLocationInput" class="form-input" placeholder="e.g., Tirupati, Hotel Name">
+                    </div>
+                    <button class="btn btn-primary" id="startRestingBtn" onclick="startResting()">
+                        🛌 Start Resting
+                    </button>
+                    <button class="btn btn-success hidden" id="resumeTravelBtn" onclick="resumeTravel()">
+                        🏍️ Resume Travel
+                    </button>
+                </div>
+                <p id="restingStatus" style="margin-top: 10px; font-size: 0.85rem; color: var(--text-muted);"></p>
+            </div>
         </div>
 
         <!-- Routes Tab -->
@@ -650,6 +670,55 @@
             }
         }
 
+        async function startResting() {
+            const locationName = document.getElementById('restingLocationInput').value.trim();
+
+            if (!locationName) {
+                alert('Please enter a location name');
+                return;
+            }
+
+            try {
+                const res = await fetch('/api/location/rest', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ location_name: locationName })
+                });
+
+                if (!res.ok) throw new Error('Failed to set resting status');
+
+                document.getElementById('startRestingBtn').classList.add('hidden');
+                document.getElementById('resumeTravelBtn').classList.remove('hidden');
+                document.getElementById('restingStatus').textContent = `🌙 Resting for the night at ${locationName}`;
+                document.getElementById('restingStatus').style.color = 'var(--accent-green)';
+                document.getElementById('restingLocationInput').disabled = true;
+            } catch (err) {
+                console.error('Failed to start resting:', err);
+                alert('Failed to set resting status');
+            }
+        }
+
+        async function resumeTravel() {
+            try {
+                const res = await fetch('/api/location/resume', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' }
+                });
+
+                if (!res.ok) throw new Error('Failed to resume travel');
+
+                document.getElementById('startRestingBtn').classList.remove('hidden');
+                document.getElementById('resumeTravelBtn').classList.add('hidden');
+                document.getElementById('restingStatus').textContent = '🏍️ Travel resumed - live route active';
+                document.getElementById('restingStatus').style.color = 'var(--accent-blue)';
+                document.getElementById('restingLocationInput').disabled = false;
+                document.getElementById('restingLocationInput').value = '';
+            } catch (err) {
+                console.error('Failed to resume travel:', err);
+                alert('Failed to resume travel');
+            }
+        }
+
         function renderStops() {
             const container = document.getElementById('stopsContainer');
             container.innerHTML = '';
@@ -683,11 +752,32 @@
             users.forEach(user => {
                 const card = document.createElement('div');
                 card.className = 'card user-card';
+
+                // Format last active time
+                let lastActiveText = 'Never';
+                if (user.last_active) {
+                    const lastActive = new Date(user.last_active + 'Z');
+                    const now = new Date();
+                    const diffMs = now - lastActive;
+                    const diffMins = Math.floor(diffMs / 60000);
+
+                    if (diffMins < 1) lastActiveText = 'Just now';
+                    else if (diffMins < 60) lastActiveText = `${diffMins}m ago`;
+                    else if (diffMins < 1440) lastActiveText = `${Math.floor(diffMins / 60)}h ago`;
+                    else lastActiveText = lastActive.toLocaleDateString();
+                }
+
                 card.innerHTML = `
                     <img class="user-avatar" src="${user.picture || ''}" alt="">
                     <div class="user-info">
-                        <h3>${user.name}</h3>
+                        <h3>
+                            ${user.is_online ? '<span style="color:#22c55e;">●</span> ' : '<span style="color:#6b7280;">○</span> '}
+                            ${user.name}
+                        </h3>
                         <p>${user.email}</p>
+                        <p style="font-size:0.75rem;color:var(--text-muted);margin-top:4px;">
+                            📊 ${user.today_views || 0} views today • Last: ${lastActiveText}
+                        </p>
                     </div>
                     <span class="user-role ${user.role}">${user.role}</span>
                     <div style="display:flex;gap:8px;margin-left:15px;">
@@ -1160,6 +1250,14 @@
                 loadData();
             } else {
                 // Just reload data in background
+                loadData();
+            }
+        });
+
+        // Listen for analytics updates (user connected/disconnected)
+        socket.on('analytics_updated', () => {
+            // Reload users to update online status and view counts
+            if (document.getElementById('users-tab').classList.contains('active')) {
                 loadData();
             }
         });

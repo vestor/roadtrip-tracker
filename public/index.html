@@ -400,6 +400,23 @@
             </div>
         </header>
 
+        <!-- Credit Banner -->
+        <div style="
+            text-align: center;
+            padding: 8px 20px;
+            background: rgba(59, 130, 246, 0.1);
+            border-bottom: 1px solid var(--bg-secondary);
+            color: var(--text-muted);
+            font-size: 0.85rem;
+        ">
+            Made with <span style="color: #ef4444;">❤️</span> by
+            <a href="https://github.com/vestor" target="_blank" rel="noopener noreferrer" style="
+                color: var(--accent-blue);
+                text-decoration: none;
+                font-weight: 500;
+            ">vestor</a>
+        </div>
+
         <div class="stats-bar">
             <div class="stat">
                 <div class="stat-value" id="totalKm">—</div>
@@ -543,15 +560,17 @@
 
         async function loadData() {
             try {
-                const [stopsRes, photosRes, locRes] = await Promise.all([
+                const [stopsRes, photosRes, locRes, restingRes] = await Promise.all([
                     fetch('/api/stops'),
                     fetch('/api/photos'),
-                    fetch('/api/location')
+                    fetch('/api/location'),
+                    fetch('/api/location/resting')
                 ]);
 
                 stops = await stopsRes.json();
                 photos = await photosRes.json();
                 const liveLocation = await locRes.json();
+                const restingStatus = await restingRes.json();
 
                 await loadRoutes();
 
@@ -559,8 +578,11 @@
                 renderPhotos();
                 renderMap();
                 updateStats();
-                
-                if (liveLocation.lat && liveLocation.lng) {
+
+                // Check resting status first, then live location
+                if (restingStatus.resting) {
+                    showRestingBanner(restingStatus.location);
+                } else if (liveLocation.lat && liveLocation.lng) {
                     updateLiveLocation(liveLocation);
                 }
             } catch (err) {
@@ -796,6 +818,21 @@
             }
         }
 
+        function showRestingBanner(location) {
+            const banner = document.getElementById('currentLegBanner');
+            if (banner) {
+                document.getElementById('legRoute').textContent = `Currently: Resting for the Night`;
+                document.getElementById('legDetails').textContent = location ? `📍 ${location}` : '🌙';
+                banner.style.display = 'flex';
+            }
+
+            // Hide live route banner if showing
+            const liveBanner = document.getElementById('liveBanner');
+            if (liveBanner) {
+                liveBanner.style.display = 'none';
+            }
+        }
+
         function setupTabs() {
             document.querySelectorAll('.tab-btn').forEach(btn => {
                 btn.addEventListener('click', () => {
@@ -832,6 +869,14 @@
             socket.on('routes_invalidated', () => {
                 cachedRoutes = [];
                 renderMap();
+            });
+            socket.on('resting_status_changed', (data) => {
+                if (data.resting) {
+                    showRestingBanner(data.location);
+                } else {
+                    // Reload data to refresh live location/route
+                    loadData();
+                }
             });
             socket.on('photo_uploaded_notification', (data) => {
                 // Only show notification if user is not admin (admin uploaded it)
