@@ -383,6 +383,26 @@
                 </div>
                 <p id="nextStopStatus" style="margin-top: 10px; font-size: 0.85rem; color: var(--text-muted);"></p>
             </div>
+
+            <div class="location-section" style="margin-top: 30px;">
+                <h3 style="margin-bottom: 15px;">🌙 Resting for the Night</h3>
+                <p style="font-size: 0.9rem; color: var(--text-secondary); margin-bottom: 15px;">
+                    Mark when you've stopped for the night. The live route will change to "Currently: Resting for the Night".
+                </p>
+                <div id="restingControls">
+                    <div class="form-group">
+                        <label class="form-label">Current Location Name</label>
+                        <input type="text" id="restingLocationInput" class="form-input" placeholder="e.g., Tirupati, Hotel Name">
+                    </div>
+                    <button class="btn btn-primary" id="startRestingBtn" onclick="startResting()">
+                        🛌 Start Resting
+                    </button>
+                    <button class="btn btn-success hidden" id="resumeTravelBtn" onclick="resumeTravel()">
+                        🏍️ Resume Travel
+                    </button>
+                </div>
+                <p id="restingStatus" style="margin-top: 10px; font-size: 0.85rem; color: var(--text-muted);"></p>
+            </div>
         </div>
 
         <!-- Routes Tab -->
@@ -647,6 +667,55 @@
             } catch (err) {
                 console.error('Failed to set next stop:', err);
                 alert('Failed to set next stop');
+            }
+        }
+
+        async function startResting() {
+            const locationName = document.getElementById('restingLocationInput').value.trim();
+
+            if (!locationName) {
+                alert('Please enter a location name');
+                return;
+            }
+
+            try {
+                const res = await fetch('/api/location/rest', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ location_name: locationName })
+                });
+
+                if (!res.ok) throw new Error('Failed to set resting status');
+
+                document.getElementById('startRestingBtn').classList.add('hidden');
+                document.getElementById('resumeTravelBtn').classList.remove('hidden');
+                document.getElementById('restingStatus').textContent = `🌙 Resting for the night at ${locationName}`;
+                document.getElementById('restingStatus').style.color = 'var(--accent-green)';
+                document.getElementById('restingLocationInput').disabled = true;
+            } catch (err) {
+                console.error('Failed to start resting:', err);
+                alert('Failed to set resting status');
+            }
+        }
+
+        async function resumeTravel() {
+            try {
+                const res = await fetch('/api/location/resume', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' }
+                });
+
+                if (!res.ok) throw new Error('Failed to resume travel');
+
+                document.getElementById('startRestingBtn').classList.remove('hidden');
+                document.getElementById('resumeTravelBtn').classList.add('hidden');
+                document.getElementById('restingStatus').textContent = '🏍️ Travel resumed - live route active';
+                document.getElementById('restingStatus').style.color = 'var(--accent-blue)';
+                document.getElementById('restingLocationInput').disabled = false;
+                document.getElementById('restingLocationInput').value = '';
+            } catch (err) {
+                console.error('Failed to resume travel:', err);
+                alert('Failed to resume travel');
             }
         }
 

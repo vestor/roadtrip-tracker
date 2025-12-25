@@ -129,15 +129,29 @@ db.exec(`
     distance_meters INTEGER,
     duration_seconds INTEGER,
     is_active INTEGER DEFAULT 0,
+    resting_for_night INTEGER DEFAULT 0,
+    resting_location TEXT,
     last_updated DATETIME DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (to_stop_id) REFERENCES stops(id) ON DELETE SET NULL,
     FOREIGN KEY (next_stop_id) REFERENCES stops(id) ON DELETE SET NULL
   );
 `);
 
-// Migration: Add next_stop_id to existing live_route_progress table
+// Migrations: Add new columns to existing live_route_progress table
 try {
   db.prepare('ALTER TABLE live_route_progress ADD COLUMN next_stop_id INTEGER REFERENCES stops(id) ON DELETE SET NULL').run();
+} catch (e) {
+  // Column already exists, ignore
+}
+
+try {
+  db.prepare('ALTER TABLE live_route_progress ADD COLUMN resting_for_night INTEGER DEFAULT 0').run();
+} catch (e) {
+  // Column already exists, ignore
+}
+
+try {
+  db.prepare('ALTER TABLE live_route_progress ADD COLUMN resting_location TEXT').run();
 } catch (e) {
   // Column already exists, ignore
 }
@@ -618,6 +632,42 @@ app.post('/api/location/set-next-stop', isAdmin, async (req, res) => {
 
   io.emit('live_route_updated', { next_stop: stop });
   res.json({ success: true, next_stop: stop });
+});
+
+// Start resting for the night
+app.post('/api/location/rest', isAdmin, (req, res) => {
+  const { location_name } = req.body;
+
+  // Set resting status
+  db.prepare('UPDATE live_route_progress SET resting_for_night = 1, resting_location = ?, is_active = 0 WHERE id = 1')
+    .run(location_name || 'Unknown Location');
+
+  io.emit('resting_status_changed', { resting: true, location: location_name });
+  res.json({ success: true });
+});
+
+// Resume travel (stop resting)
+app.post('/api/location/resume', isAdmin, async (req, res) => {
+  // Clear resting status
+  db.prepare('UPDATE live_route_progress SET resting_for_night = 0, resting_location = NULL WHERE id = 1').run();
+
+  // Recalculate route if location is available
+  const location = db.prepare('SELECT * FROM live_location WHERE id = 1').get();
+  if (location && location.lat && location.lng) {
+    await updateLiveRoute(location.lat, location.lng);
+  }
+
+  io.emit('resting_status_changed', { resting: false });
+  res.json({ success: true });
+});
+
+// Get resting status
+app.get('/api/location/resting', isAuthenticated, (req, res) => {
+  const progress = db.prepare('SELECT resting_for_night, resting_location FROM live_route_progress WHERE id = 1').get();
+  res.json({
+    resting: progress?.resting_for_night === 1,
+    location: progress?.resting_location
+  });
 });
 
 // ============================================
