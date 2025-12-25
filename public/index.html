@@ -789,7 +789,7 @@
         function showCurrentLegBanner(toCity, distanceMeters, durationSeconds) {
             const banner = document.getElementById('currentLegBanner');
             if (banner) {
-                document.getElementById('legRoute').textContent = `Currently: → ${toCity}`;
+                document.getElementById('legRoute').textContent = `Currently: Enroute ${toCity}`;
                 document.getElementById('legDetails').textContent =
                     `${(distanceMeters / 1000).toFixed(1)} km remaining • ETA: ${formatDuration(durationSeconds)}`;
                 banner.style.display = 'flex';
