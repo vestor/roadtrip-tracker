@@ -431,29 +431,34 @@
     <div class="modal-overlay" id="photoModal">
         <div class="modal">
             <div class="modal-header">
-                <h2 class="modal-title">Upload Photo</h2>
+                <h2 class="modal-title">Upload Photo/Video</h2>
                 <button class="modal-close" onclick="closePhotoModal()">×</button>
             </div>
             <div class="modal-body">
                 <div id="photoPreview" style="text-align:center;margin-bottom:15px;"></div>
+
+                <div style="background: rgba(59, 130, 246, 0.1); padding: 10px; border-radius: 6px; margin-bottom: 15px; font-size: 0.85rem; color: var(--text-secondary);">
+                    💡 <strong>Tip:</strong> Photos with GPS data will auto-extract location. All fields are optional!
+                </div>
+
                 <div class="form-row">
                     <div class="form-group">
-                        <label class="form-label">Latitude (optional)</label>
-                        <input type="number" step="0.0001" class="form-input" id="photoLat">
+                        <label class="form-label">Latitude (optional - auto-extracted from photos)</label>
+                        <input type="number" step="0.0001" class="form-input" id="photoLat" placeholder="Auto-detected">
                     </div>
                     <div class="form-group">
-                        <label class="form-label">Longitude (optional)</label>
-                        <input type="number" step="0.0001" class="form-input" id="photoLng">
+                        <label class="form-label">Longitude (optional - auto-extracted from photos)</label>
+                        <input type="number" step="0.0001" class="form-input" id="photoLng" placeholder="Auto-detected">
                     </div>
                 </div>
                 <div class="form-group">
-                    <label class="form-label">Caption</label>
+                    <label class="form-label">Caption (optional)</label>
                     <input type="text" class="form-input" id="photoCaption" placeholder="Describe this moment...">
                 </div>
                 <div class="form-group">
-                    <label class="form-label">Link to Stop</label>
+                    <label class="form-label">Link to Stop (optional - leave as None for location-based photos)</label>
                     <select class="form-select" id="photoStopId">
-                        <option value="">None</option>
+                        <option value="">None - Use photo's GPS location</option>
                     </select>
                 </div>
                 <div class="form-actions">
@@ -752,6 +757,13 @@
             const uploadProgress = document.getElementById('uploadProgress');
             const uploadStatus = document.getElementById('uploadStatus');
 
+            console.log('Starting upload:', {
+                fileName: currentPhotoFile.name,
+                fileType: currentPhotoFile.type,
+                fileSize: (currentPhotoFile.size / 1024 / 1024).toFixed(2) + ' MB',
+                isVideo: isVideo
+            });
+
             const formData = new FormData();
             formData.append('photo', currentPhotoFile);
             formData.append('lat', document.getElementById('photoLat').value || '');
@@ -766,23 +778,31 @@
                     ? 'Compressing video to 720p... This may take a minute.'
                     : 'Processing image...';
 
+                console.log('Sending request to /api/photos...');
+                const startTime = Date.now();
+
                 const response = await fetch('/api/photos', {
                     method: 'POST',
                     body: formData
                 });
 
+                const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
+                console.log(`Request completed in ${elapsed}s, status: ${response.status}`);
+
                 if (!response.ok) {
-                    throw new Error(`Upload failed: ${response.statusText}`);
+                    const errorText = await response.text();
+                    console.error('Server error response:', errorText);
+                    throw new Error(`Upload failed: ${response.status} ${response.statusText}`);
                 }
 
                 const result = await response.json();
                 uploadProgress.style.display = 'none';
-                await loadData();
                 console.log('Upload successful:', result);
+                await loadData();
             } catch (err) {
                 console.error('Upload error:', err);
                 uploadProgress.style.display = 'none';
-                alert(`Failed to upload ${isVideo ? 'video' : 'photo'}: ${err.message}`);
+                alert(`Failed to upload ${isVideo ? 'video' : 'photo'}: ${err.message}\n\nCheck browser console for details.`);
             }
         }
 

@@ -635,6 +635,7 @@ app.post('/api/photos', isAdmin, upload.single('photo'), async (req, res) => {
     } else {
       // Compress and resize image (WhatsApp HD style)
       await sharp(inputPath)
+        .rotate() // Auto-rotate based on EXIF orientation (fixes iPhone edited photos)
         .resize(1920, 1920, {
           fit: 'inside',
           withoutEnlargement: true
