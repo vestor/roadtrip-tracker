@@ -430,6 +430,29 @@ app.get('/auth/me', (req, res) => {
   }
 });
 
+// Diagnostic endpoint to check ffmpeg availability
+app.get('/api/diagnostics', isAdmin, (req, res) => {
+  const { execSync } = require('child_process');
+  const diagnostics = {
+    nodeVersion: process.version,
+    platform: process.platform,
+    dataDir: DATA_DIR,
+    uploadsDir: UPLOADS_DIR,
+    ffmpegPath: ffmpegPath,
+    ffmpegAvailable: false,
+    ffmpegVersion: null
+  };
+
+  try {
+    diagnostics.ffmpegVersion = execSync('ffmpeg -version').toString().split('\n')[0];
+    diagnostics.ffmpegAvailable = true;
+  } catch (err) {
+    diagnostics.ffmpegError = err.message;
+  }
+
+  res.json(diagnostics);
+});
+
 // ============================================
 // API ROUTES - STOPS
 // ============================================
@@ -570,30 +593,45 @@ app.post('/api/photos', isAdmin, upload.single('photo'), async (req, res) => {
 
     if (isVideo) {
       // Compress video (WhatsApp style: 720p, lower bitrate)
-      await new Promise((resolve, reject) => {
-        ffmpeg(inputPath)
-          .outputOptions([
-            '-c:v libx264',           // H.264 codec
-            '-preset medium',         // Encoding speed/quality balance
-            '-crf 28',               // Quality (23-28 is good, higher = smaller file)
-            '-vf scale=-2:720',      // Scale to 720p height, maintain aspect ratio
-            '-c:a aac',              // AAC audio codec
-            '-b:a 128k',             // Audio bitrate
-            '-movflags +faststart'   // Enable fast start for web playback
-          ])
-          .output(outputPath + '.tmp')
-          .on('end', () => {
-            // Replace original with compressed version
-            fs.unlinkSync(inputPath);
-            fs.renameSync(outputPath + '.tmp', outputPath);
-            resolve();
-          })
-          .on('error', (err) => {
-            console.error('Video compression error:', err);
-            reject(err);
-          })
-          .run();
-      });
+      console.log('Starting video compression for:', req.file.filename);
+      try {
+        await new Promise((resolve, reject) => {
+          ffmpeg(inputPath)
+            .outputOptions([
+              '-c:v libx264',           // H.264 codec
+              '-preset faster',         // Faster encoding (was 'medium')
+              '-crf 28',               // Quality (23-28 is good, higher = smaller file)
+              '-vf scale=-2:720',      // Scale to 720p height, maintain aspect ratio
+              '-c:a aac',              // AAC audio codec
+              '-b:a 128k',             // Audio bitrate
+              '-movflags +faststart'   // Enable fast start for web playback
+            ])
+            .output(outputPath + '.tmp')
+            .on('start', (cmd) => {
+              console.log('FFmpeg command:', cmd);
+            })
+            .on('progress', (progress) => {
+              console.log('Processing: ' + progress.percent + '% done');
+            })
+            .on('end', () => {
+              console.log('Video compression completed');
+              // Replace original with compressed version
+              fs.unlinkSync(inputPath);
+              fs.renameSync(outputPath + '.tmp', outputPath);
+              resolve();
+            })
+            .on('error', (err) => {
+              console.error('Video compression error:', err.message);
+              reject(err);
+            })
+            .run();
+        });
+      } catch (compressionError) {
+        console.error('Video compression failed, saving original:', compressionError.message);
+        // Fallback: Keep original video file if compression fails
+        // The file is already uploaded to inputPath (which equals outputPath)
+        // So we don't need to do anything - just continue
+      }
     } else {
       // Compress and resize image (WhatsApp HD style)
       await sharp(inputPath)
@@ -619,6 +657,8 @@ app.post('/api/photos', isAdmin, upload.single('photo'), async (req, res) => {
     `).run(photoId, req.file.filename, req.file.originalname, lat || null, lng || null, caption || '', stop_id || null);
 
     const photo = db.prepare('SELECT * FROM photos WHERE id = ?').get(photoId);
+
+    console.log(`${isVideo ? 'Video' : 'Photo'} saved successfully:`, photo.filename);
 
     // Emit events
     io.emit('photo_added', photo);
