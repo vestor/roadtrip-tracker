@@ -235,7 +235,7 @@ app.use(express.static('public'));
 app.use('/uploads', express.static(UPLOADS_DIR));
 
 // Session configuration with persistent SQLite storage
-app.use(session({
+const sessionMiddleware = session({
   store: new SqliteStore({
     client: db,
     expired: {
@@ -252,10 +252,15 @@ app.use(session({
     sameSite: 'lax', // Allow cookies on OAuth redirects
     maxAge: 30 * 24 * 60 * 60 * 1000 // 30 days
   }
-}));
+});
+
+app.use(sessionMiddleware);
 
 app.use(passport.initialize());
 app.use(passport.session());
+
+// Share session with Socket.IO for user analytics tracking
+io.engine.use(sessionMiddleware);
 
 // ============================================
 // PASSPORT GOOGLE OAUTH
