@@ -865,20 +865,33 @@
 
         function handleFiles(files) {
             Array.from(files).forEach(file => {
-                if (file.type.startsWith('image/')) {
+                // Accept both images and videos
+                if (file.type.startsWith('image/') || file.type.startsWith('video/')) {
                     currentPhotoFile = file;
                     showPhotoModal(file);
+                } else {
+                    debugLog(`⚠️ Unsupported file type: ${file.type}`, 'warning');
                 }
             });
         }
 
         function showPhotoModal(file) {
-            const reader = new FileReader();
-            reader.onload = (e) => {
-                document.getElementById('photoPreview').innerHTML = 
-                    `<img src="${e.target.result}" style="max-width:100%;max-height:200px;border-radius:8px;">`;
-            };
-            reader.readAsDataURL(file);
+            const isVideo = file.type.startsWith('video/');
+
+            if (isVideo) {
+                // Show video preview
+                const videoURL = URL.createObjectURL(file);
+                document.getElementById('photoPreview').innerHTML =
+                    `<video src="${videoURL}" controls playsinline muted style="max-width:100%;max-height:200px;border-radius:8px;"></video>`;
+            } else {
+                // Show image preview
+                const reader = new FileReader();
+                reader.onload = (e) => {
+                    document.getElementById('photoPreview').innerHTML =
+                        `<img src="${e.target.result}" style="max-width:100%;max-height:200px;border-radius:8px;">`;
+                };
+                reader.readAsDataURL(file);
+            }
 
             // Note: GPS location will be auto-extracted from photo EXIF data on the server
             // Leave lat/lng fields empty to use photo's embedded location
