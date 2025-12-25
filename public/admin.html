@@ -733,15 +733,10 @@
                     `<img src="${e.target.result}" style="max-width:100%;max-height:200px;border-radius:8px;">`;
             };
             reader.readAsDataURL(file);
-            
-            // Try to get current location for photo
-            if (navigator.geolocation) {
-                navigator.geolocation.getCurrentPosition((pos) => {
-                    document.getElementById('photoLat').value = pos.coords.latitude.toFixed(6);
-                    document.getElementById('photoLng').value = pos.coords.longitude.toFixed(6);
-                });
-            }
-            
+
+            // Note: GPS location will be auto-extracted from photo EXIF data on the server
+            // Leave lat/lng fields empty to use photo's embedded location
+
             document.getElementById('photoModal').classList.add('active');
         }
 
