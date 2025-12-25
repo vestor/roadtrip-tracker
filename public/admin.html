@@ -275,6 +275,11 @@
         </div>
     </header>
 
+    <!-- New User Notification Banner -->
+    <div id="newUserBanner" class="hidden" style="background: linear-gradient(135deg, #10b981 0%, #059669 100%); color: white; padding: 15px 20px; text-align: center; font-weight: 500; box-shadow: 0 4px 6px rgba(0,0,0,0.1); position: sticky; top: 0; z-index: 999; cursor: pointer;" onclick="this.classList.add('hidden'); switchTab('users-tab')">
+        <span id="newUserMessage"></span> • Click to review →
+    </div>
+
     <div class="container">
         <div class="tabs">
             <button class="tab-btn active" data-tab="stops">📍 Stops</button>
@@ -952,15 +957,32 @@
         socket.on('photo_deleted', loadData);
         socket.on('new_user_signup', (data) => {
             const message = data.role === 'admin'
-                ? `${data.name} joined as admin!`
-                : `${data.name} is waiting for approval`;
-            showNotification('🔔 New User Sign-Up', {
+                ? `🎉 ${data.name} joined as admin!`
+                : `🔔 ${data.name} is waiting for approval`;
+
+            // Show browser notification
+            showNotification('New User Sign-Up', {
                 body: message,
                 icon: '/favicon.ico',
                 tag: 'new-user'
             });
+
+            // Show in-app banner notification
+            const banner = document.getElementById('newUserBanner');
+            const messageEl = document.getElementById('newUserMessage');
+            messageEl.textContent = message;
+            banner.classList.remove('hidden');
+
+            // Auto-hide after 10 seconds
+            setTimeout(() => {
+                banner.classList.add('hidden');
+            }, 10000);
+
             // Reload users to show the new user
             if (document.getElementById('users-tab').classList.contains('active')) {
+                loadData();
+            } else {
+                // Just reload data in background
                 loadData();
             }
         });
