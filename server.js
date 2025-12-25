@@ -577,17 +577,41 @@ app.post('/api/photos', isAdmin, upload.single('photo'), async (req, res) => {
   const isVideo = req.file.mimetype.startsWith('video/');
 
   try {
-    // Extract GPS from EXIF data if it's an image and no manual location provided
-    if (!isVideo && (!lat || !lng)) {
+    console.log('Upload started:', {
+      filename: req.file.filename,
+      isVideo,
+      manualLocation: { lat, lng }
+    });
+
+    // Always try to extract GPS from EXIF for images (prioritize embedded location)
+    if (!isVideo) {
       try {
+        console.log('Attempting EXIF GPS extraction...');
         const exifData = await exifr.parse(inputPath, { gps: true });
+        console.log('EXIF data:', exifData ? {
+          hasLatitude: !!exifData.latitude,
+          hasLongitude: !!exifData.longitude,
+          latitude: exifData.latitude,
+          longitude: exifData.longitude
+        } : 'No EXIF data found');
+
         if (exifData && exifData.latitude && exifData.longitude) {
-          lat = lat || exifData.latitude;
-          lng = lng || exifData.longitude;
-          console.log('Extracted GPS from EXIF:', { lat, lng });
+          // Prioritize EXIF GPS over manual fields
+          lat = exifData.latitude;
+          lng = exifData.longitude;
+          console.log('✓ Using GPS from EXIF:', { lat, lng });
+        } else if (lat && lng) {
+          console.log('✓ Using manual GPS location:', { lat, lng });
+        } else {
+          console.log('⚠ No GPS location available (neither EXIF nor manual)');
         }
       } catch (exifError) {
-        console.log('No EXIF GPS data found or error reading EXIF:', exifError.message);
+        console.log('EXIF extraction error:', exifError.message);
+        if (lat && lng) {
+          console.log('✓ Falling back to manual GPS location:', { lat, lng });
+        } else {
+          console.log('⚠ No GPS location available');
+        }
       }
     }
 
