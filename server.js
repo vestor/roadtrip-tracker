@@ -135,6 +135,22 @@ db.exec(`
     FOREIGN KEY (to_stop_id) REFERENCES stops(id) ON DELETE SET NULL,
     FOREIGN KEY (next_stop_id) REFERENCES stops(id) ON DELETE SET NULL
   );
+
+  CREATE TABLE IF NOT EXISTS user_analytics (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id TEXT NOT NULL,
+    session_id TEXT NOT NULL,
+    connected_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    disconnected_at DATETIME,
+    is_online INTEGER DEFAULT 1,
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_user_analytics_user
+    ON user_analytics(user_id, connected_at);
+
+  CREATE INDEX IF NOT EXISTS idx_user_analytics_online
+    ON user_analytics(user_id, is_online);
 `);
 
 // Migrations: Add new columns to existing live_route_progress table
@@ -850,7 +866,38 @@ app.delete('/api/photos/:id', isAdmin, (req, res) => {
 // ============================================
 app.get('/api/users', isAdmin, (req, res) => {
   const users = db.prepare('SELECT id, email, name, picture, role, created_at FROM users').all();
-  res.json(users);
+
+  // Enhance with analytics data
+  const usersWithAnalytics = users.map(user => {
+    // Check if user is currently online
+    const onlineCheck = db.prepare(`
+      SELECT COUNT(*) as count FROM user_analytics
+      WHERE user_id = ? AND is_online = 1
+    `).get(user.id);
+    const isOnline = onlineCheck.count > 0;
+
+    // Count today's page opens
+    const todayCount = db.prepare(`
+      SELECT COUNT(*) as count FROM user_analytics
+      WHERE user_id = ?
+        AND DATE(connected_at) = DATE('now')
+    `).get(user.id);
+
+    // Get last activity
+    const lastActivity = db.prepare(`
+      SELECT MAX(connected_at) as last_active FROM user_analytics
+      WHERE user_id = ?
+    `).get(user.id);
+
+    return {
+      ...user,
+      is_online: isOnline,
+      today_views: todayCount.count,
+      last_active: lastActivity?.last_active
+    };
+  });
+
+  res.json(usersWithAnalytics);
 });
 
 app.put('/api/users/:id/role', isAdmin, (req, res) => {
@@ -1103,9 +1150,49 @@ app.post('/api/routes/recalculate', isAdmin, async (req, res) => {
 // ============================================
 io.on('connection', (socket) => {
   console.log('Client connected:', socket.id);
-  
+
+  // Track user analytics if authenticated
+  const user = socket.request.session?.passport?.user;
+  if (user) {
+    const userId = user.id || user;
+    const sessionId = socket.id;
+
+    try {
+      // Insert new session record
+      db.prepare(`
+        INSERT INTO user_analytics (user_id, session_id, connected_at, is_online)
+        VALUES (?, ?, datetime('now'), 1)
+      `).run(userId, sessionId);
+
+      console.log(`User ${userId} connected (session: ${sessionId})`);
+
+      // Broadcast analytics update to admins
+      io.emit('analytics_updated');
+    } catch (err) {
+      console.error('Failed to track user connection:', err);
+    }
+  }
+
   socket.on('disconnect', () => {
     console.log('Client disconnected:', socket.id);
+
+    // Mark user as offline
+    if (user) {
+      try {
+        db.prepare(`
+          UPDATE user_analytics
+          SET disconnected_at = datetime('now'), is_online = 0
+          WHERE session_id = ? AND is_online = 1
+        `).run(socket.id);
+
+        console.log(`User ${user.id || user} disconnected (session: ${socket.id})`);
+
+        // Broadcast analytics update to admins
+        io.emit('analytics_updated');
+      } catch (err) {
+        console.error('Failed to track user disconnection:', err);
+      }
+    }
   });
 });
 
