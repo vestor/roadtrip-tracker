@@ -321,6 +321,29 @@
                 <p style="margin: 0; color: var(--accent-green);">⏳ Uploading and compressing...</p>
                 <p id="uploadStatus" style="margin: 5px 0 0 0; font-size: 0.9rem; color: var(--text-muted);"></p>
             </div>
+
+            <!-- Debug Log Panel -->
+            <div style="margin: 20px 0;">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+                    <h3 style="margin: 0; font-size: 1rem;">🐛 Upload Debug Log</h3>
+                    <button class="btn btn-secondary" onclick="clearDebugLog()" style="padding: 4px 12px; font-size: 0.85rem;">Clear</button>
+                </div>
+                <div id="debugLog" style="
+                    background: #0a0a0f;
+                    border: 1px solid var(--bg-secondary);
+                    border-radius: 8px;
+                    padding: 15px;
+                    max-height: 300px;
+                    overflow-y: auto;
+                    font-family: 'Courier New', monospace;
+                    font-size: 0.75rem;
+                    line-height: 1.6;
+                    color: #a0a0a0;
+                ">
+                    <div style="color: var(--text-muted); font-style: italic;">Logs will appear here when you upload photos/videos...</div>
+                </div>
+            </div>
+
             <div class="photo-grid" id="photosContainer"></div>
         </div>
 
@@ -497,6 +520,47 @@
         let stops = [], users = [], photos = [];
         let currentPhotoFile = null;
         let locationWatchId = null;
+
+        // Debug logging functions
+        function debugLog(message, type = 'info') {
+            const debugLogEl = document.getElementById('debugLog');
+            const timestamp = new Date().toLocaleTimeString('en-US', { hour12: false });
+
+            const colors = {
+                info: '#60a5fa',      // blue
+                success: '#22c55e',   // green
+                error: '#ef4444',     // red
+                warning: '#f59e0b'    // orange
+            };
+
+            const icons = {
+                info: 'ℹ️',
+                success: '✓',
+                error: '✗',
+                warning: '⚠'
+            };
+
+            const logEntry = document.createElement('div');
+            logEntry.style.marginBottom = '8px';
+            logEntry.innerHTML = `
+                <span style="color: #666;">[${timestamp}]</span>
+                <span style="color: ${colors[type]};">${icons[type]}</span>
+                <span style="color: ${colors[type]};">${message}</span>
+            `;
+
+            // Remove placeholder if exists
+            if (debugLogEl.children.length === 1 && debugLogEl.children[0].style.fontStyle === 'italic') {
+                debugLogEl.innerHTML = '';
+            }
+
+            debugLogEl.appendChild(logEntry);
+            debugLogEl.scrollTop = debugLogEl.scrollHeight; // Auto-scroll to bottom
+        }
+
+        function clearDebugLog() {
+            const debugLogEl = document.getElementById('debugLog');
+            debugLogEl.innerHTML = '<div style="color: var(--text-muted); font-style: italic;">Logs cleared. Upload a photo/video to see new logs...</div>';
+        }
 
         // Request notification permission on load
         async function requestNotificationPermission() {
@@ -834,12 +898,15 @@
             const uploadProgress = document.getElementById('uploadProgress');
             const uploadStatus = document.getElementById('uploadStatus');
 
-            console.log('Starting upload:', {
+            const fileInfo = {
                 fileName: currentPhotoFile.name,
                 fileType: currentPhotoFile.type,
                 fileSize: (currentPhotoFile.size / 1024 / 1024).toFixed(2) + ' MB',
                 isVideo: isVideo
-            });
+            };
+
+            debugLog(`📤 Starting upload: ${fileInfo.fileName} (${fileInfo.fileSize})`, 'info');
+            debugLog(`Type: ${fileInfo.fileType} | Video: ${isVideo ? 'Yes' : 'No'}`, 'info');
 
             const formData = new FormData();
             formData.append('photo', currentPhotoFile);
@@ -855,7 +922,7 @@
                     ? 'Compressing video to 720p... This may take a minute.'
                     : 'Processing image...';
 
-                console.log('Sending request to /api/photos...');
+                debugLog('🌐 Sending request to /api/photos...', 'info');
                 const startTime = Date.now();
 
                 const response = await fetch('/api/photos', {
@@ -864,22 +931,22 @@
                 });
 
                 const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
-                console.log(`Request completed in ${elapsed}s, status: ${response.status}`);
+                debugLog(`⏱️ Request completed in ${elapsed}s | Status: ${response.status}`, response.ok ? 'info' : 'warning');
 
                 if (!response.ok) {
                     const errorText = await response.text();
-                    console.error('Server error response:', errorText);
+                    debugLog(`❌ Server error: ${errorText}`, 'error');
                     throw new Error(`Upload failed: ${response.status} ${response.statusText}`);
                 }
 
                 const result = await response.json();
                 uploadProgress.style.display = 'none';
-                console.log('Upload successful:', result);
+                debugLog(`✅ Upload successful! Photo ID: ${result.id}`, 'success');
                 await loadData();
             } catch (err) {
-                console.error('Upload error:', err);
+                debugLog(`💥 Upload error: ${err.message}`, 'error');
                 uploadProgress.style.display = 'none';
-                alert(`Failed to upload ${isVideo ? 'video' : 'photo'}: ${err.message}\n\nCheck browser console for details.`);
+                alert(`Failed to upload ${isVideo ? 'video' : 'photo'}: ${err.message}\n\nCheck the debug log below for details.`);
             }
         }
 
