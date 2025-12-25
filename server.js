@@ -124,14 +124,23 @@ db.exec(`
     from_lat REAL,
     from_lng REAL,
     to_stop_id INTEGER,
+    next_stop_id INTEGER,
     geometry TEXT,
     distance_meters INTEGER,
     duration_seconds INTEGER,
     is_active INTEGER DEFAULT 0,
     last_updated DATETIME DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY (to_stop_id) REFERENCES stops(id) ON DELETE SET NULL
+    FOREIGN KEY (to_stop_id) REFERENCES stops(id) ON DELETE SET NULL,
+    FOREIGN KEY (next_stop_id) REFERENCES stops(id) ON DELETE SET NULL
   );
 `);
+
+// Migration: Add next_stop_id to existing live_route_progress table
+try {
+  db.prepare('ALTER TABLE live_route_progress ADD COLUMN next_stop_id INTEGER REFERENCES stops(id) ON DELETE SET NULL').run();
+} catch (e) {
+  // Column already exists, ignore
+}
 
 // Insert default admin if not exists (first user to login becomes admin)
 const adminCheck = db.prepare('SELECT value FROM settings WHERE key = ?').get('admin_email');
@@ -326,8 +335,20 @@ function findNextStop(currentLat, currentLng, stops) {
 }
 
 async function updateLiveRoute(currentLat, currentLng) {
-  const stops = db.prepare('SELECT * FROM stops ORDER BY order_index').all();
-  const nextStop = findNextStop(currentLat, currentLng, stops);
+  // Check if admin manually set next stop
+  const progress = db.prepare('SELECT next_stop_id FROM live_route_progress WHERE id = 1').get();
+  let nextStop = null;
+
+  if (progress && progress.next_stop_id) {
+    // Use manually selected next stop
+    nextStop = db.prepare('SELECT * FROM stops WHERE id = ?').get(progress.next_stop_id);
+    console.log('Using manually selected next stop:', nextStop?.city);
+  } else {
+    // Auto-detect next stop based on location
+    const stops = db.prepare('SELECT * FROM stops ORDER BY order_index').all();
+    nextStop = findNextStop(currentLat, currentLng, stops);
+    console.log('Auto-detected next stop:', nextStop?.city);
+  }
 
   if (!nextStop) {
     db.prepare('UPDATE live_route_progress SET is_active = 0 WHERE id = 1').run();
@@ -462,11 +483,26 @@ app.get('/api/stops', isAuthenticated, (req, res) => {
 });
 
 app.post('/api/stops', isAdmin, (req, res) => {
-  const { city, lat, lng, date, nights, type, note, is_start, is_end, fog_zone } = req.body;
-  
-  // Get max order_index
-  const maxOrder = db.prepare('SELECT MAX(order_index) as max FROM stops').get();
-  const order_index = (maxOrder.max || 0) + 1;
+  const { city, lat, lng, date, nights, type, note, is_start, is_end, fog_zone, insert_after_id } = req.body;
+
+  let order_index;
+
+  if (insert_after_id) {
+    // Insert after specific stop
+    const afterStop = db.prepare('SELECT order_index FROM stops WHERE id = ?').get(insert_after_id);
+    if (!afterStop) {
+      return res.status(400).json({ error: 'Invalid insert_after_id' });
+    }
+    order_index = afterStop.order_index + 0.5;
+
+    // Shift all stops after this position
+    db.prepare('UPDATE stops SET order_index = order_index + 1 WHERE order_index > ?').run(afterStop.order_index);
+    order_index = afterStop.order_index + 1;
+  } else {
+    // Append to end
+    const maxOrder = db.prepare('SELECT MAX(order_index) as max FROM stops').get();
+    order_index = (maxOrder.max || 0) + 1;
+  }
 
   const result = db.prepare(`
     INSERT INTO stops (city, lat, lng, date, nights, type, note, is_start, is_end, fog_zone, order_index)
@@ -555,6 +591,33 @@ app.post('/api/location/stop', isAdmin, (req, res) => {
   io.emit('live_route_updated', { active: false });
 
   res.json({ success: true });
+});
+
+// Set next stop manually
+app.post('/api/location/set-next-stop', isAdmin, async (req, res) => {
+  const { stop_id } = req.body;
+
+  if (!stop_id) {
+    return res.status(400).json({ error: 'stop_id is required' });
+  }
+
+  // Verify stop exists
+  const stop = db.prepare('SELECT * FROM stops WHERE id = ?').get(stop_id);
+  if (!stop) {
+    return res.status(404).json({ error: 'Stop not found' });
+  }
+
+  // Update next_stop_id in live_route_progress
+  db.prepare('UPDATE live_route_progress SET next_stop_id = ? WHERE id = 1').run(stop_id);
+
+  // Get current location and recalculate route
+  const location = db.prepare('SELECT * FROM live_location WHERE id = 1').get();
+  if (location && location.lat && location.lng) {
+    await updateLiveRoute(location.lat, location.lng);
+  }
+
+  io.emit('live_route_updated', { next_stop: stop });
+  res.json({ success: true, next_stop: stop });
 });
 
 // ============================================

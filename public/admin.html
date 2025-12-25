@@ -346,6 +346,20 @@
                     When enabled, your live location will be visible to all approved users on the map.
                 </p>
             </div>
+
+            <div class="location-section" style="margin-top: 30px;">
+                <h3 style="margin-bottom: 15px;">🎯 Next Destination</h3>
+                <p style="font-size: 0.9rem; color: var(--text-secondary); margin-bottom: 15px;">
+                    Manually select which stop you're heading to. The live route will show your path to this destination.
+                </p>
+                <div class="form-group">
+                    <label class="form-label">Select Next Stop</label>
+                    <select id="nextStopSelect" class="form-input" onchange="setNextStop()">
+                        <option value="">Auto-detect (based on distance)</option>
+                    </select>
+                </div>
+                <p id="nextStopStatus" style="margin-top: 10px; font-size: 0.85rem; color: var(--text-muted);"></p>
+            </div>
         </div>
 
         <!-- Routes Tab -->
@@ -374,6 +388,15 @@
             </div>
             <div class="modal-body">
                 <input type="hidden" id="editingStopId">
+                <div class="form-group" id="insertAfterGroup">
+                    <label class="form-label">Insert Position</label>
+                    <select class="form-select" id="stopInsertAfter">
+                        <option value="">Add to end of route</option>
+                    </select>
+                    <p style="font-size: 0.75rem; color: var(--text-muted); margin-top: 5px;">
+                        Choose where to insert this stop in your route
+                    </p>
+                </div>
                 <div class="form-group">
                     <label class="form-label">City Name *</label>
                     <input type="text" class="form-input" id="stopCity" placeholder="e.g., Nagpur">
@@ -521,8 +544,45 @@
                 renderUsers();
                 renderPhotos();
                 updateLocationStatus(location);
+                populateNextStopSelector();
             } catch (err) {
                 console.error('Failed to load data:', err);
+            }
+        }
+
+        function populateNextStopSelector() {
+            const select = document.getElementById('nextStopSelect');
+            select.innerHTML = '<option value="">Auto-detect (based on distance)</option>';
+            stops.forEach((stop, idx) => {
+                select.innerHTML += `<option value="${stop.id}">#${idx + 1}: ${stop.city}</option>`;
+            });
+        }
+
+        async function setNextStop() {
+            const stopId = document.getElementById('nextStopSelect').value;
+
+            try {
+                if (stopId) {
+                    const res = await fetch('/api/location/set-next-stop', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ stop_id: parseInt(stopId) })
+                    });
+
+                    if (!res.ok) throw new Error('Failed to set next stop');
+
+                    const data = await res.json();
+                    const stop = stops.find(s => s.id == stopId);
+                    document.getElementById('nextStopStatus').textContent = `✓ Next stop set to: ${stop.city}`;
+                    document.getElementById('nextStopStatus').style.color = 'var(--accent-green)';
+                } else {
+                    // Clear manual selection - will auto-detect
+                    document.getElementById('nextStopStatus').textContent = '↻ Using auto-detection based on your location';
+                    document.getElementById('nextStopStatus').style.color = 'var(--text-muted)';
+                }
+            } catch (err) {
+                console.error('Failed to set next stop:', err);
+                alert('Failed to set next stop');
             }
         }
 
@@ -613,6 +673,20 @@
             document.getElementById('stopType').value = stop ? stop.type : 'normal';
             document.getElementById('stopFogZone').value = stop ? stop.fog_zone : 0;
             document.getElementById('stopNote').value = stop ? stop.note : '';
+
+            // Populate insert after dropdown (only for new stops)
+            const insertAfterGroup = document.getElementById('insertAfterGroup');
+            const insertAfterSelect = document.getElementById('stopInsertAfter');
+            if (!stop) {
+                insertAfterGroup.style.display = 'block';
+                insertAfterSelect.innerHTML = '<option value="">Add to end of route</option>';
+                stops.forEach((s, idx) => {
+                    insertAfterSelect.innerHTML += `<option value="${s.id}">After #${idx + 1}: ${s.city}</option>`;
+                });
+            } else {
+                insertAfterGroup.style.display = 'none';
+            }
+
             document.getElementById('stopModal').classList.add('active');
         }
 
@@ -638,6 +712,14 @@
                 note: document.getElementById('stopNote').value
             };
 
+            // Add insert_after_id for new stops
+            if (!id) {
+                const insertAfterId = document.getElementById('stopInsertAfter').value;
+                if (insertAfterId) {
+                    data.insert_after_id = parseInt(insertAfterId);
+                }
+            }
+
             if (!data.city || !data.lat || !data.lng || !data.date) {
                 alert('Please fill required fields');
                 return;
@@ -646,7 +728,7 @@
             try {
                 const url = id ? `/api/stops/${id}` : '/api/stops';
                 const method = id ? 'PUT' : 'POST';
-                
+
                 // Preserve order_index if editing
                 if (id) {
                     const existing = stops.find(s => s.id == id);
