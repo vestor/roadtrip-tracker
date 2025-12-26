@@ -642,8 +642,12 @@ app.post('/api/location/set-next-stop', isAdmin, async (req, res) => {
     return res.status(404).json({ error: 'Stop not found' });
   }
 
-  // Update next_stop_id in live_route_progress
-  db.prepare('UPDATE live_route_progress SET next_stop_id = ? WHERE id = 1').run(stop_id);
+  // Update next_stop_id and clear resting status (setting next stop = resuming travel)
+  db.prepare(`
+    UPDATE live_route_progress
+    SET next_stop_id = ?, resting_for_night = 0, resting_location = NULL
+    WHERE id = 1
+  `).run(stop_id);
 
   // Get current location and recalculate route
   const location = db.prepare('SELECT * FROM live_location WHERE id = 1').get();
@@ -651,6 +655,8 @@ app.post('/api/location/set-next-stop', isAdmin, async (req, res) => {
     await updateLiveRoute(location.lat, location.lng);
   }
 
+  // Notify clients that resting has ended and route is active
+  io.emit('resting_status_changed', { resting: false });
   io.emit('live_route_updated', { next_stop: stop });
   res.json({ success: true, next_stop: stop });
 });
