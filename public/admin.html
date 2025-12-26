@@ -659,6 +659,14 @@
                     const stop = stops.find(s => s.id == stopId);
                     document.getElementById('nextStopStatus').textContent = `✓ Next stop set to: ${stop.city}`;
                     document.getElementById('nextStopStatus').style.color = 'var(--accent-green)';
+
+                    // Auto-resume travel when setting next stop
+                    document.getElementById('startRestingBtn').classList.remove('hidden');
+                    document.getElementById('resumeTravelBtn').classList.add('hidden');
+                    document.getElementById('restingStatus').textContent = '🏍️ Travel resumed automatically';
+                    document.getElementById('restingStatus').style.color = 'var(--accent-blue)';
+                    document.getElementById('restingLocationInput').disabled = false;
+                    document.getElementById('restingLocationInput').value = '';
                 } else {
                     // Clear manual selection - will auto-detect
                     document.getElementById('nextStopStatus').textContent = '↻ Using auto-detection based on your location';
