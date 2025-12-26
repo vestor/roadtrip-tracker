@@ -71,6 +71,7 @@ db.exec(`
     is_end INTEGER DEFAULT 0,
     fog_zone INTEGER DEFAULT 0,
     order_index INTEGER,
+    completed INTEGER DEFAULT 0,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
   );
 
@@ -168,6 +169,12 @@ try {
 
 try {
   db.prepare('ALTER TABLE live_route_progress ADD COLUMN resting_location TEXT').run();
+} catch (e) {
+  // Column already exists, ignore
+}
+
+try {
+  db.prepare('ALTER TABLE stops ADD COLUMN completed INTEGER DEFAULT 0').run();
 } catch (e) {
   // Column already exists, ignore
 }
@@ -572,11 +579,22 @@ app.put('/api/stops/:id', isAdmin, (req, res) => {
 });
 
 app.delete('/api/stops/:id', isAdmin, (req, res) => {
-  const { id } = req.params;
+  const { id} = req.params;
   invalidateRoutesForStop(id);
   db.prepare('DELETE FROM stops WHERE id = ?').run(id);
   io.emit('stops_updated');
   res.json({ success: true });
+});
+
+app.put('/api/stops/:id/complete', isAdmin, (req, res) => {
+  const { id } = req.params;
+  const { completed } = req.body;
+
+  db.prepare('UPDATE stops SET completed = ? WHERE id = ?').run(completed ? 1 : 0, id);
+
+  const updatedStop = db.prepare('SELECT * FROM stops WHERE id = ?').get(id);
+  io.emit('stops_updated');
+  res.json(updatedStop);
 });
 
 app.put('/api/stops/reorder', isAdmin, (req, res) => {

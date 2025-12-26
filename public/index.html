@@ -426,6 +426,10 @@
                 <div class="stat-value" id="totalDays">—</div>
                 <div class="stat-label">Days</div>
             </div>
+            <div class="stat">
+                <div class="stat-value" id="completedStops">—</div>
+                <div class="stat-label">Completed</div>
+            </div>
             <div class="stat" onclick="scrollToPhotos()" style="cursor: pointer;" title="Click to view photos">
                 <div class="stat-value" id="totalPhotos">0</div>
                 <div class="stat-label">Photos</div>
@@ -615,7 +619,7 @@
                 }
 
                 const card = document.createElement('div');
-                card.className = `day-card ${stop.type}`;
+                card.className = `day-card ${stop.type} ${stop.completed ? 'completed' : ''}`;
                 card.innerHTML = `
                     <div class="day-header">
                         <div class="day-date">
@@ -623,13 +627,14 @@
                             <span class="day-name">${dayName} · ${monthName}</span>
                         </div>
                         <div class="badges">
+                            ${stop.completed ? '<span class="badge" style="background:#22c55e;">✅ Completed</span>' : ''}
                             ${stop.type === 'holiday' ? '<span class="badge holiday">🎉 Holiday</span>' : ''}
                             ${stop.type === 'workday' ? '<span class="badge workday">💼 Work</span>' : ''}
                         </div>
                     </div>
                     <div class="route-info">
-                        ${index > 0 ? `<span>${stops[index-1].city}</span><span class="route-arrow">→</span>` : ''}
-                        <strong>${stop.city}</strong>
+                        ${index > 0 ? `<span style="${stops[index-1].completed ? 'opacity: 0.6;' : ''}">${stops[index-1].city}</span><span class="route-arrow">→</span>` : ''}
+                        <strong style="${stop.completed ? 'opacity: 0.6;' : ''}">${stop.city}</strong>
                         ${index > 0 ? `<div class="route-stats"><span class="route-stat">📍 ${distanceKm} km</span></div>` : ''}
                     </div>
                     ${stop.note ? `<div class="note">📌 ${stop.note}</div>` : ''}
@@ -683,18 +688,23 @@
 
             // Draw cached route segments
             cachedRoutes.forEach((route) => {
-                const color = route.from_order <= 4 ? '#0ea5e9' :
-                              route.from_order >= 5 && route.from_order <= 8 ? '#f97316' : '#a855f7';
+                // Check if both stops are completed (leg is completed)
+                const fromStop = stops.find(s => s.order_index === route.from_order);
+                const toStop = stops.find(s => s.order_index === route.to_order);
+                const isCompleted = fromStop?.completed && toStop?.completed;
+
+                // Green for completed legs, blue for upcoming legs
+                const color = isCompleted ? '#22c55e' : '#3b82f6';
 
                 const coordinates = route.geometry.map(coord => [coord[0], coord[1]]);
 
                 L.polyline(coordinates, {
                     color: color,
                     weight: 3,
-                    opacity: 0.7,
+                    opacity: isCompleted ? 0.5 : 0.7,
                     dashArray: route.from_city.includes('Bhutan') || route.to_city.includes('Bhutan') ? '8, 8' : null
                 }).addTo(map).bindPopup(`
-                    <b>${route.from_city} → ${route.to_city}</b><br>
+                    <b>${isCompleted ? '✅ ' : ''}${route.from_city} → ${route.to_city}</b><br>
                     Distance: ${(route.distance_meters / 1000).toFixed(1)} km<br>
                     Duration: ${formatDuration(route.duration_seconds)}
                 `);
@@ -781,6 +791,11 @@
                 const days = Math.ceil((endDate - startDate) / (1000 * 60 * 60 * 24)) + 1;
                 document.getElementById('totalDays').textContent = days;
             }
+
+            // Update completed stops progress
+            const completedCount = stops.filter(s => s.completed).length;
+            const totalStops = stops.length;
+            document.getElementById('completedStops').textContent = `${completedCount}/${totalStops}`;
         }
 
         function updateLiveLocation(loc) {

@@ -737,12 +737,26 @@
 
                 const card = document.createElement('div');
                 card.className = 'card stop-card';
+
+                // Auto-suggest completed if date has passed
+                const today = new Date();
+                today.setHours(0, 0, 0, 0);
+                const stopDate = new Date(stop.date + 'T00:00:00');
+                const isPast = stopDate < today;
+
                 card.innerHTML = `
                     <div class="stop-order">${index + 1}</div>
                     <div class="stop-info">
-                        <h3>${stop.city} ${stop.is_start ? '🏁' : ''} ${stop.is_end ? '🏁' : ''}</h3>
+                        <h3>
+                            ${stop.completed ? '✅' : '⏺️'}
+                            ${stop.city} ${stop.is_start ? '🏁' : ''} ${stop.is_end ? '🏁' : ''}
+                        </h3>
                         <p>${dateStr} • ${stop.type} ${stop.nights > 0 ? `• ${stop.nights} nights` : ''} ${stop.note ? `• ${stop.note}` : ''}</p>
                         <p style="font-size:0.75rem;color:var(--text-muted);">📍 ${stop.lat}, ${stop.lng}</p>
+                        <label style="display:flex;align-items:center;gap:8px;margin-top:8px;font-size:0.85rem;cursor:pointer;">
+                            <input type="checkbox" ${stop.completed ? 'checked' : ''} onchange="toggleStopComplete(${stop.id}, this.checked)">
+                            <span style="color:var(--text-secondary);">${isPast && !stop.completed ? 'Mark as completed (date passed)' : 'Completed'}</span>
+                        </label>
                     </div>
                     <div class="stop-actions">
                         <button class="edit" onclick="editStop(${stop.id})">✏️ Edit</button>
@@ -751,6 +765,27 @@
                 `;
                 container.appendChild(card);
             });
+        }
+
+        async function toggleStopComplete(stopId, completed) {
+            try {
+                const res = await fetch(`/api/stops/${stopId}/complete`, {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ completed })
+                });
+
+                if (!res.ok) throw new Error('Failed to update completion status');
+
+                // Update local data
+                const stop = stops.find(s => s.id === stopId);
+                if (stop) stop.completed = completed ? 1 : 0;
+
+                renderStops();
+            } catch (err) {
+                console.error('Failed to toggle completion:', err);
+                alert('Failed to update completion status');
+            }
         }
 
         function renderUsers() {
