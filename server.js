@@ -1472,6 +1472,12 @@ app.get('/admin', (req, res) => {
 // VIDEO RE-COMPRESSION MIGRATION
 // ============================================
 async function recompressExistingVideos() {
+  // Check if migration is disabled via environment variable
+  if (process.env.DISABLE_VIDEO_MIGRATION === 'true') {
+    console.log('⚠️  Video re-compression migration DISABLED (DISABLE_VIDEO_MIGRATION=true)');
+    return;
+  }
+
   // Check if migration already ran (v2 = mobile-compatible baseline profile)
   const migrationCheck = db.prepare('SELECT value FROM settings WHERE key = ?').get('videos_recompressed_v2');
   if (migrationCheck && migrationCheck.value === '1') {
@@ -1480,6 +1486,7 @@ async function recompressExistingVideos() {
   }
 
   console.log('🎥 Starting video re-compression migration (v2 - mobile compatible)...');
+  console.log('⚠️  Note: This may use significant memory. Set DISABLE_VIDEO_MIGRATION=true to skip.');
 
   try {
     // Get all photos from database
