@@ -1436,6 +1436,96 @@ app.get('/admin', (req, res) => {
 });
 
 // ============================================
+// VIDEO RE-COMPRESSION MIGRATION
+// ============================================
+async function recompressExistingVideos() {
+  // Check if migration already ran
+  const migrationCheck = db.prepare('SELECT value FROM settings WHERE key = ?').get('videos_recompressed_v1');
+  if (migrationCheck && migrationCheck.value === '1') {
+    console.log('✓ Video re-compression migration already completed');
+    return;
+  }
+
+  console.log('🎥 Starting one-time video re-compression migration...');
+
+  try {
+    // Get all photos from database
+    const allPhotos = db.prepare('SELECT * FROM photos').all();
+    const videoFiles = allPhotos.filter(photo => {
+      const isVideo = /\.(mp4|mov|avi|webm|mkv)$/i.test(photo.filename);
+      const filePath = path.join(UPLOADS_DIR, photo.filename);
+      return isVideo && fs.existsSync(filePath);
+    });
+
+    if (videoFiles.length === 0) {
+      console.log('✓ No videos found to re-compress');
+      db.prepare('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)').run('videos_recompressed_v1', '1');
+      return;
+    }
+
+    console.log(`📹 Found ${videoFiles.length} video(s) to re-compress with optimized settings`);
+
+    let processed = 0;
+    let failed = 0;
+
+    for (const video of videoFiles) {
+      try {
+        const inputPath = path.join(UPLOADS_DIR, video.filename);
+        const tempPath = path.join(UPLOADS_DIR, `temp_${video.filename}`);
+
+        console.log(`  [${processed + 1}/${videoFiles.length}] Re-compressing: ${video.filename}`);
+
+        await new Promise((resolve, reject) => {
+          ffmpeg(inputPath)
+            .outputOptions([
+              '-c:v libx264',
+              '-preset faster',
+              '-crf 26',
+              '-maxrate 2M',
+              '-bufsize 4M',
+              '-vf scale=-2:720',
+              '-c:a aac',
+              '-b:a 96k',
+              '-movflags +faststart',
+              '-pix_fmt yuv420p'
+            ])
+            .output(tempPath)
+            .on('end', () => {
+              // Replace original with optimized version
+              fs.unlinkSync(inputPath);
+              fs.renameSync(tempPath, inputPath);
+              processed++;
+              console.log(`  ✓ Completed: ${video.filename}`);
+              resolve();
+            })
+            .on('error', (err) => {
+              console.error(`  ✗ Failed: ${video.filename} - ${err.message}`);
+              // Clean up temp file if it exists
+              if (fs.existsSync(tempPath)) fs.unlinkSync(tempPath);
+              failed++;
+              resolve(); // Continue with next video
+            })
+            .run();
+        });
+
+      } catch (err) {
+        console.error(`  ✗ Error processing ${video.filename}:`, err.message);
+        failed++;
+      }
+    }
+
+    console.log(`\n✓ Video re-compression complete: ${processed} succeeded, ${failed} failed`);
+
+    // Mark migration as complete
+    db.prepare('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)').run('videos_recompressed_v1', '1');
+
+  } catch (err) {
+    console.error('✗ Video re-compression migration failed:', err);
+    // Don't mark as complete if migration failed
+  }
+}
+
+// ============================================
 // START SERVER
 // ============================================
 httpServer.listen(PORT, () => {
@@ -1449,4 +1539,11 @@ httpServer.listen(PORT, () => {
 ║  ${process.env.GOOGLE_CLIENT_ID ? '✅ Google OAuth configured' : '⚠️  Google OAuth NOT configured (check .env)'}                          ║
 ╚════════════════════════════════════════════════════════════╝
   `);
+
+  // Run video re-compression migration in background (non-blocking)
+  setTimeout(() => {
+    recompressExistingVideos().catch(err => {
+      console.error('Video migration error:', err);
+    });
+  }, 1000); // Wait 1 second after server starts
 });
