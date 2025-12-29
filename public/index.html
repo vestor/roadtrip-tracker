@@ -432,16 +432,13 @@
             }
             .sidebar {
                 order: -1;
-                max-height: 60vh;
-                overflow-y: auto;
+                max-height: none;
+                overflow-y: visible;
             }
 
-            /* Map mobile */
+            /* Map mobile - hidden by default */
             .map-section {
-                min-height: 400px;
-            }
-            #map {
-                min-height: 400px;
+                display: none;
             }
             .map-legend {
                 bottom: 10px;
@@ -498,15 +495,15 @@
 
             /* Photo grid mobile */
             .photo-grid {
-                grid-template-columns: 1fr;
-                gap: 12px;
+                grid-template-columns: repeat(2, 1fr);
+                gap: 8px;
             }
             .photo-card {
-                aspect-ratio: 4/3;
+                aspect-ratio: 1;
             }
             .photo-caption {
-                font-size: 0.8rem;
-                padding: 15px 12px 12px;
+                font-size: 0.75rem;
+                padding: 12px 8px 8px;
             }
 
             /* Modal mobile */
@@ -597,13 +594,6 @@
             .stat-value {
                 font-size: 1.3rem;
             }
-            .map-section,
-            #map {
-                min-height: 300px;
-            }
-            .sidebar {
-                max-height: 50vh;
-            }
             .login-box h1 {
                 font-size: 1.8rem;
             }
@@ -611,15 +601,17 @@
 
         /* Landscape mobile optimization */
         @media (max-width: 900px) and (orientation: landscape) {
+            /* Keep map hidden in landscape mobile too */
+            .map-section {
+                display: none;
+            }
             .container {
-                grid-template-columns: 1fr 350px;
+                grid-template-columns: 1fr;
             }
             .sidebar {
-                order: 0;
-                max-height: calc(100vh - 250px);
-            }
-            .map-section {
-                min-height: calc(100vh - 250px);
+                order: -1;
+                max-height: calc(100vh - 200px);
+                overflow-y: auto;
             }
         }
     </style>
