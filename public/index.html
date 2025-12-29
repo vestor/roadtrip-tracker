@@ -1241,6 +1241,7 @@
         let storyPaused = false;
         const PHOTO_DURATION = 5000; // 5 seconds per photo
         const TEXT_DURATION = 4000; // 4 seconds per text slide
+        const LOCATION_TRANSITION_DURATION = 2000; // 2 seconds for location transitions
 
         async function loadStory() {
             try {
@@ -1295,13 +1296,100 @@
             });
         }
 
-        function showStorySlide(index) {
+        function getLocationInfo(item) {
+            if (!item) return null;
+
+            // Try to find the stop for this item
+            const stop = item.stop_id ? stops.find(s => s.id === item.stop_id) : null;
+
+            return {
+                stop_id: item.stop_id,
+                city: stop ? stop.city : null,
+                lat: item.lat || (stop ? stop.lat : null),
+                lng: item.lng || (stop ? stop.lng : null)
+            };
+        }
+
+        function hasLocationChanged(prevItem, currentItem) {
+            const prevLoc = getLocationInfo(prevItem);
+            const currLoc = getLocationInfo(currentItem);
+
+            // No location change if either doesn't have location
+            if (!prevLoc || !currLoc || !prevLoc.city || !currLoc.city) {
+                return false;
+            }
+
+            // Check if stop_id changed
+            return prevLoc.stop_id !== currLoc.stop_id && prevLoc.stop_id && currLoc.stop_id;
+        }
+
+        function showLocationTransition(fromItem, toItem, callback) {
+            const fromLoc = getLocationInfo(fromItem);
+            const toLoc = getLocationInfo(toItem);
+
+            const content = document.getElementById('storyContent');
+            const caption = document.getElementById('storyCaption');
+
+            // Clear caption during transition
+            caption.textContent = '';
+
+            // Create transition slide
+            content.innerHTML = `
+                <div style="display:flex; flex-direction:column; align-items:center; justify-content:center; padding:40px; text-align:center; animation: fadeIn 0.5s ease;">
+                    <div style="font-size:3rem; margin-bottom:20px; animation: bounce 1s ease infinite;">🏍️</div>
+                    <div style="font-size:1.8rem; color:var(--accent-orange); font-weight:600; margin-bottom:15px; text-shadow:0 2px 12px rgba(0,0,0,0.8);">
+                        ${fromLoc.city}
+                    </div>
+                    <div style="font-size:2rem; margin:15px 0; animation: moveDown 1s ease infinite;">↓</div>
+                    <div style="font-size:1.8rem; color:var(--accent-green); font-weight:600; margin-top:15px; text-shadow:0 2px 12px rgba(0,0,0,0.8);">
+                        ${toLoc.city}
+                    </div>
+                    <div style="font-size:0.9rem; color:rgba(255,255,255,0.7); margin-top:25px;">
+                        📍 Moving to next location
+                    </div>
+                </div>
+                <style>
+                    @keyframes fadeIn {
+                        from { opacity: 0; transform: scale(0.9); }
+                        to { opacity: 1; transform: scale(1); }
+                    }
+                    @keyframes moveDown {
+                        0%, 100% { transform: translateY(0); }
+                        50% { transform: translateY(8px); }
+                    }
+                </style>
+            `;
+
+            // Auto-advance after transition duration
+            storyTimer = setTimeout(() => {
+                callback();
+            }, LOCATION_TRANSITION_DURATION);
+        }
+
+        function showStorySlide(index, skipTransition = false) {
             if (index < 0 || index >= storyItems.length) {
                 closeStory();
                 return;
             }
 
             currentStoryIndex = index;
+            const item = storyItems[index];
+            const prevItem = index > 0 ? storyItems[index - 1] : null;
+
+            // Check if we need to show location transition
+            if (!skipTransition && prevItem && hasLocationChanged(prevItem, item)) {
+                showLocationTransition(prevItem, item, () => {
+                    // After transition, show the actual slide
+                    showStorySlideContent(index);
+                });
+                return;
+            }
+
+            // No transition needed, show content directly
+            showStorySlideContent(index);
+        }
+
+        function showStorySlideContent(index) {
             const item = storyItems[index];
             const content = document.getElementById('storyContent');
             const caption = document.getElementById('storyCaption');
@@ -1332,7 +1420,7 @@
                 const isVideo = /\.(mp4|mov|avi|webm|mkv)$/i.test(item.filename);
 
                 if (isVideo) {
-                    content.innerHTML = `<video id="storyVideo" src="/uploads/${item.filename}" playsinline muted style="max-width:100%; max-height:100%; object-fit:contain;"></video>`;
+                    content.innerHTML = `<video id="storyVideo" src="/uploads/${item.filename}" playsinline controls style="max-width:100%; max-height:100%; object-fit:contain;"></video>`;
                     const video = document.getElementById('storyVideo');
 
                     video.onloadedmetadata = () => {
@@ -1372,7 +1460,8 @@
 
         function previousSlide() {
             if (currentStoryIndex > 0) {
-                showStorySlide(currentStoryIndex - 1);
+                // Skip transition when going backwards
+                showStorySlide(currentStoryIndex - 1, true);
             }
         }
 
