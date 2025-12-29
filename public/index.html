@@ -417,6 +417,12 @@
             ">vestor</a>
         </div>
 
+        <!-- Story CTA Banner -->
+        <div id="storyCTA" style="display:none; text-align:center; padding:15px 20px; background:linear-gradient(135deg, #667eea 0%, #764ba2 100%); cursor:pointer; border-bottom:1px solid var(--bg-secondary);" onclick="openStory()">
+            <div style="font-size:1.1rem; font-weight:600; color:white; margin-bottom:4px;">📖 Watch the Journey Till Now</div>
+            <div style="font-size:0.85rem; color:rgba(255,255,255,0.9);" id="storyCount">—</div>
+        </div>
+
         <div class="stats-bar">
             <div class="stat">
                 <div class="stat-value" id="totalKm">—</div>
@@ -480,6 +486,30 @@
             <div id="modalMediaContainer"></div>
             <p class="photo-modal-caption" id="modalCaption"></p>
         </div>
+    </div>
+
+    <!-- Story Viewer -->
+    <div id="storyViewer" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:#000; z-index:10000;">
+        <!-- Progress bars -->
+        <div id="storyProgress" style="position:absolute; top:10px; left:10px; right:10px; display:flex; gap:4px; z-index:10002;"></div>
+
+        <!-- Close button -->
+        <button onclick="closeStory()" style="position:absolute; top:15px; right:15px; background:rgba(0,0,0,0.5); border:none; color:white; width:36px; height:36px; border-radius:50%; font-size:24px; cursor:pointer; z-index:10002;">×</button>
+
+        <!-- Content container -->
+        <div id="storyContent" style="width:100%; height:100%; display:flex; align-items:center; justify-content:center; position:relative;">
+            <!-- Media/text will be injected here -->
+        </div>
+
+        <!-- Caption overlay -->
+        <div id="storyCaption" style="position:absolute; bottom:20px; left:20px; right:20px; color:white; text-shadow:0 2px 8px rgba(0,0,0,0.8); font-size:1rem; z-index:10001; text-align:center;"></div>
+
+        <!-- Navigation areas (invisible tap zones) -->
+        <div onclick="previousSlide()" style="position:absolute; left:0; top:0; width:30%; height:100%; cursor:pointer; z-index:10001;"></div>
+        <div onclick="nextSlide()" style="position:absolute; right:0; top:0; width:70%; height:100%; cursor:pointer; z-index:10001;"></div>
+
+        <!-- Pause/play on tap center -->
+        <div onclick="toggleStoryPause()" style="position:absolute; left:30%; top:0; width:40%; height:100%; cursor:pointer; z-index:10000;"></div>
     </div>
 
     <script>
@@ -582,6 +612,7 @@
                 renderPhotos();
                 renderMap();
                 updateStats();
+                loadStory();
 
                 // Check resting status first, then live location
                 if (restingStatus.resting) {
@@ -945,11 +976,196 @@
             return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
         }
 
+        // Story functionality
+        let storyItems = [];
+        let currentStoryIndex = 0;
+        let storyTimer = null;
+        let storyPaused = false;
+        const PHOTO_DURATION = 5000; // 5 seconds per photo
+        const TEXT_DURATION = 4000; // 4 seconds per text slide
+
+        async function loadStory() {
+            try {
+                const res = await fetch('/api/story');
+                storyItems = await res.json();
+
+                // Show/hide story CTA based on content availability
+                if (storyItems.length > 0) {
+                    document.getElementById('storyCTA').style.display = 'block';
+                    document.getElementById('storyCount').textContent = `${storyItems.length} moment${storyItems.length !== 1 ? 's' : ''} from the road`;
+                } else {
+                    document.getElementById('storyCTA').style.display = 'none';
+                }
+            } catch (err) {
+                console.error('Failed to load story:', err);
+            }
+        }
+
+        function openStory() {
+            if (storyItems.length === 0) return;
+
+            currentStoryIndex = 0;
+            storyPaused = false;
+            document.getElementById('storyViewer').style.display = 'block';
+            renderStoryProgress();
+            showStorySlide(0);
+        }
+
+        function closeStory() {
+            document.getElementById('storyViewer').style.display = 'none';
+            if (storyTimer) clearTimeout(storyTimer);
+            // Stop any playing videos
+            const videos = document.getElementById('storyContent').querySelectorAll('video');
+            videos.forEach(v => v.pause());
+        }
+
+        function renderStoryProgress() {
+            const container = document.getElementById('storyProgress');
+            container.innerHTML = '';
+
+            storyItems.forEach((item, index) => {
+                const bar = document.createElement('div');
+                bar.style.cssText = 'flex:1; height:3px; background:rgba(255,255,255,0.3); border-radius:2px; overflow:hidden;';
+                bar.id = `progress-${index}`;
+
+                const fill = document.createElement('div');
+                fill.style.cssText = 'height:100%; width:0%; background:white; transition:width 0.1s linear;';
+                fill.id = `progress-fill-${index}`;
+
+                bar.appendChild(fill);
+                container.appendChild(bar);
+            });
+        }
+
+        function showStorySlide(index) {
+            if (index < 0 || index >= storyItems.length) {
+                closeStory();
+                return;
+            }
+
+            currentStoryIndex = index;
+            const item = storyItems[index];
+            const content = document.getElementById('storyContent');
+            const caption = document.getElementById('storyCaption');
+
+            // Clear existing timer
+            if (storyTimer) clearTimeout(storyTimer);
+
+            // Update progress bars
+            storyItems.forEach((_, i) => {
+                const fill = document.getElementById(`progress-fill-${i}`);
+                if (i < index) {
+                    fill.style.width = '100%';
+                    fill.style.transition = 'none';
+                } else if (i === index) {
+                    fill.style.width = '0%';
+                    fill.style.transition = 'none';
+                    setTimeout(() => {
+                        fill.style.transition = `width ${item.type === 'text' ? TEXT_DURATION : PHOTO_DURATION}ms linear`;
+                        fill.style.width = '100%';
+                    }, 50);
+                } else {
+                    fill.style.width = '0%';
+                    fill.style.transition = 'none';
+                }
+            });
+
+            if (item.type === 'media') {
+                const isVideo = /\.(mp4|mov|avi|webm|mkv)$/i.test(item.filename);
+
+                if (isVideo) {
+                    content.innerHTML = `<video id="storyVideo" src="/uploads/${item.filename}" playsinline muted style="max-width:100%; max-height:100%; object-fit:contain;"></video>`;
+                    const video = document.getElementById('storyVideo');
+
+                    video.onloadedmetadata = () => {
+                        video.play();
+                        // Auto-advance after video ends
+                        video.onended = () => nextSlide();
+                    };
+                } else {
+                    content.innerHTML = `<img src="/uploads/${item.filename}" style="max-width:100%; max-height:100%; object-fit:contain;">`;
+                    // Auto-advance after PHOTO_DURATION
+                    if (!storyPaused) {
+                        storyTimer = setTimeout(() => nextSlide(), PHOTO_DURATION);
+                    }
+                }
+
+                caption.textContent = item.caption || '';
+            } else if (item.type === 'text') {
+                content.innerHTML = `<div style="padding:40px; max-width:600px; text-align:center;">
+                    <p style="font-size:1.5rem; color:white; line-height:1.6; text-shadow:0 2px 12px rgba(0,0,0,0.8);">${item.text_content}</p>
+                </div>`;
+                caption.textContent = '';
+
+                // Auto-advance after TEXT_DURATION
+                if (!storyPaused) {
+                    storyTimer = setTimeout(() => nextSlide(), TEXT_DURATION);
+                }
+            }
+        }
+
+        function nextSlide() {
+            if (currentStoryIndex < storyItems.length - 1) {
+                showStorySlide(currentStoryIndex + 1);
+            } else {
+                closeStory();
+            }
+        }
+
+        function previousSlide() {
+            if (currentStoryIndex > 0) {
+                showStorySlide(currentStoryIndex - 1);
+            }
+        }
+
+        function toggleStoryPause() {
+            storyPaused = !storyPaused;
+
+            if (storyPaused) {
+                if (storyTimer) clearTimeout(storyTimer);
+                const videos = document.getElementById('storyContent').querySelectorAll('video');
+                videos.forEach(v => v.pause());
+            } else {
+                const item = storyItems[currentStoryIndex];
+                const videos = document.getElementById('storyContent').querySelectorAll('video');
+
+                if (videos.length > 0) {
+                    videos.forEach(v => v.play());
+                } else if (item.type === 'media') {
+                    storyTimer = setTimeout(() => nextSlide(), PHOTO_DURATION);
+                } else {
+                    storyTimer = setTimeout(() => nextSlide(), TEXT_DURATION);
+                }
+            }
+        }
+
+        // Listen for story updates
+        socket.on('story_updated', () => {
+            loadStory();
+        });
+
         document.getElementById('photoModal').addEventListener('click', (e) => {
             if (e.target.id === 'photoModal') closePhotoModal();
         });
         document.addEventListener('keydown', (e) => {
-            if (e.key === 'Escape') closePhotoModal();
+            const storyOpen = document.getElementById('storyViewer').style.display !== 'none';
+
+            if (e.key === 'Escape') {
+                if (storyOpen) {
+                    closeStory();
+                } else {
+                    closePhotoModal();
+                }
+            }
+
+            if (storyOpen) {
+                if (e.key === 'ArrowRight') nextSlide();
+                if (e.key === 'ArrowLeft') previousSlide();
+                if (e.key === ' ') {
+                    e.preventDefault();
+                    toggleStoryPause();
+                }
+            }
         });
 
         // Initialize

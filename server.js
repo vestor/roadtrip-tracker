@@ -93,8 +93,19 @@ db.exec(`
     lng REAL,
     caption TEXT,
     stop_id INTEGER,
+    include_in_story INTEGER DEFAULT 1,
     uploaded_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (stop_id) REFERENCES stops(id)
+  );
+
+  CREATE TABLE IF NOT EXISTS story_text_slides (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    text_content TEXT NOT NULL,
+    position_after_photo_id TEXT,
+    stop_id INTEGER,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (position_after_photo_id) REFERENCES photos(id) ON DELETE CASCADE,
+    FOREIGN KEY (stop_id) REFERENCES stops(id) ON DELETE SET NULL
   );
 
   CREATE TABLE IF NOT EXISTS settings (
@@ -175,6 +186,12 @@ try {
 
 try {
   db.prepare('ALTER TABLE stops ADD COLUMN completed INTEGER DEFAULT 0').run();
+} catch (e) {
+  // Column already exists, ignore
+}
+
+try {
+  db.prepare('ALTER TABLE photos ADD COLUMN include_in_story INTEGER DEFAULT 1').run();
 } catch (e) {
   // Column already exists, ignore
 }
@@ -887,6 +904,97 @@ app.delete('/api/photos/:id', isAdmin, (req, res) => {
     io.emit('photo_deleted', id);
   }
   
+  res.json({ success: true });
+});
+
+// ============================================
+// API ROUTES - STORY
+// ============================================
+
+// Get story items (photos + text slides) ordered by route
+app.get('/api/story', isAuthenticated, (req, res) => {
+  // Get all photos included in story with their stop order
+  const photos = db.prepare(`
+    SELECT p.*, s.order_index as stop_order
+    FROM photos p
+    LEFT JOIN stops s ON p.stop_id = s.id
+    WHERE p.include_in_story = 1
+    ORDER BY s.order_index ASC, p.uploaded_at ASC
+  `).all();
+
+  // Get all text slides
+  const textSlides = db.prepare(`
+    SELECT t.*, s.order_index as stop_order
+    FROM story_text_slides t
+    LEFT JOIN stops s ON t.stop_id = s.id
+    ORDER BY s.order_index ASC, t.created_at ASC
+  `).all();
+
+  // Combine and sort by route order
+  const storyItems = [
+    ...photos.map(p => ({ ...p, type: 'media' })),
+    ...textSlides.map(t => ({ ...t, type: 'text' }))
+  ].sort((a, b) => {
+    // Sort by stop order, then by creation time
+    if (a.stop_order !== b.stop_order) {
+      return (a.stop_order || 999) - (b.stop_order || 999);
+    }
+    const aTime = a.uploaded_at || a.created_at;
+    const bTime = b.uploaded_at || b.created_at;
+    return new Date(aTime) - new Date(bTime);
+  });
+
+  res.json(storyItems);
+});
+
+// Toggle photo inclusion in story
+app.put('/api/photos/:id/story', isAdmin, (req, res) => {
+  const { id } = req.params;
+  const { include_in_story } = req.body;
+
+  db.prepare('UPDATE photos SET include_in_story = ? WHERE id = ?').run(include_in_story ? 1 : 0, id);
+
+  const photo = db.prepare('SELECT * FROM photos WHERE id = ?').get(id);
+  io.emit('story_updated');
+  res.json(photo);
+});
+
+// Add text slide to story
+app.post('/api/story/text-slide', isAdmin, (req, res) => {
+  const { text_content, stop_id, position_after_photo_id } = req.body;
+
+  if (!text_content) {
+    return res.status(400).json({ error: 'text_content is required' });
+  }
+
+  const result = db.prepare(`
+    INSERT INTO story_text_slides (text_content, stop_id, position_after_photo_id)
+    VALUES (?, ?, ?)
+  `).run(text_content, stop_id || null, position_after_photo_id || null);
+
+  const slide = db.prepare('SELECT * FROM story_text_slides WHERE id = ?').get(result.lastInsertRowid);
+  io.emit('story_updated');
+  res.json(slide);
+});
+
+// Update text slide
+app.put('/api/story/text-slide/:id', isAdmin, (req, res) => {
+  const { id } = req.params;
+  const { text_content, stop_id } = req.body;
+
+  db.prepare('UPDATE story_text_slides SET text_content = ?, stop_id = ? WHERE id = ?')
+    .run(text_content, stop_id || null, id);
+
+  const slide = db.prepare('SELECT * FROM story_text_slides WHERE id = ?').get(id);
+  io.emit('story_updated');
+  res.json(slide);
+});
+
+// Delete text slide
+app.delete('/api/story/text-slide/:id', isAdmin, (req, res) => {
+  const { id } = req.params;
+  db.prepare('DELETE FROM story_text_slides WHERE id = ?').run(id);
+  io.emit('story_updated');
   res.json({ success: true });
 });
 
