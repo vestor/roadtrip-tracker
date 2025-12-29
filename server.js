@@ -94,6 +94,7 @@ db.exec(`
     caption TEXT,
     stop_id INTEGER,
     include_in_story INTEGER DEFAULT 1,
+    story_order INTEGER,
     uploaded_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (stop_id) REFERENCES stops(id)
   );
@@ -101,6 +102,7 @@ db.exec(`
   CREATE TABLE IF NOT EXISTS story_text_slides (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     text_content TEXT NOT NULL,
+    story_order INTEGER,
     position_after_photo_id TEXT,
     stop_id INTEGER,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -196,6 +198,18 @@ try {
   // Column already exists, ignore
 }
 
+try {
+  db.prepare('ALTER TABLE photos ADD COLUMN story_order INTEGER').run();
+} catch (e) {
+  // Column already exists, ignore
+}
+
+try {
+  db.prepare('ALTER TABLE story_text_slides ADD COLUMN story_order INTEGER').run();
+} catch (e) {
+  // Column already exists, ignore
+}
+
 // Insert default admin if not exists (first user to login becomes admin)
 const adminCheck = db.prepare('SELECT value FROM settings WHERE key = ?').get('admin_email');
 if (!adminCheck) {
@@ -256,7 +270,48 @@ app.set('trust proxy', 1);
 
 app.use(express.json());
 app.use(express.static('public'));
-app.use('/uploads', express.static(UPLOADS_DIR));
+
+// Custom video streaming with HTTP range support
+app.get('/uploads/:filename', (req, res) => {
+  const filePath = path.join(UPLOADS_DIR, req.params.filename);
+
+  if (!fs.existsSync(filePath)) {
+    return res.status(404).send('File not found');
+  }
+
+  const stat = fs.statSync(filePath);
+  const fileSize = stat.size;
+  const range = req.headers.range;
+
+  // Check if this is a video file
+  const isVideo = /\.(mp4|mov|avi|webm|mkv)$/i.test(req.params.filename);
+
+  if (range && isVideo) {
+    // Parse range header
+    const parts = range.replace(/bytes=/, "").split("-");
+    const start = parseInt(parts[0], 10);
+    const end = parts[1] ? parseInt(parts[1], 10) : fileSize - 1;
+    const chunksize = (end - start) + 1;
+    const file = fs.createReadStream(filePath, { start, end });
+    const head = {
+      'Content-Range': `bytes ${start}-${end}/${fileSize}`,
+      'Accept-Ranges': 'bytes',
+      'Content-Length': chunksize,
+      'Content-Type': 'video/mp4',
+    };
+
+    res.writeHead(206, head);
+    file.pipe(res);
+  } else {
+    // Serve full file for non-video or non-range requests
+    const head = {
+      'Content-Length': fileSize,
+      'Content-Type': isVideo ? 'video/mp4' : 'image/jpeg',
+    };
+    res.writeHead(200, head);
+    fs.createReadStream(filePath).pipe(res);
+  }
+});
 
 // Session configuration with persistent SQLite storage
 const sessionMiddleware = session({
@@ -798,12 +853,15 @@ app.post('/api/photos', isAdmin, upload.single('photo'), async (req, res) => {
           ffmpeg(inputPath)
             .outputOptions([
               '-c:v libx264',           // H.264 codec
-              '-preset faster',         // Faster encoding (was 'medium')
-              '-crf 28',               // Quality (23-28 is good, higher = smaller file)
-              '-vf scale=-2:720',      // Scale to 720p height, maintain aspect ratio
-              '-c:a aac',              // AAC audio codec
-              '-b:a 128k',             // Audio bitrate
-              '-movflags +faststart'   // Enable fast start for web playback
+              '-preset faster',         // Faster encoding
+              '-crf 26',                // Quality (26 = good quality, better than 28)
+              '-maxrate 2M',            // Max bitrate for consistent streaming
+              '-bufsize 4M',            // Buffer size
+              '-vf scale=-2:720',       // Scale to 720p height, maintain aspect ratio
+              '-c:a aac',               // AAC audio codec
+              '-b:a 96k',               // Audio bitrate (reduced from 128k)
+              '-movflags +faststart',   // Enable fast start for web playback
+              '-pix_fmt yuv420p'        // Ensure compatibility
             ])
             .output(outputPath + '.tmp')
             .on('start', (cmd) => {
@@ -850,11 +908,15 @@ app.post('/api/photos', isAdmin, upload.single('photo'), async (req, res) => {
       fs.renameSync(outputPath + '.tmp', outputPath);
     }
 
+    // Auto-assign story_order (max + 1)
+    const maxOrder = db.prepare('SELECT MAX(story_order) as max FROM photos WHERE include_in_story = 1').get();
+    const storyOrder = (maxOrder.max || 0) + 1;
+
     // Save to database
     db.prepare(`
-      INSERT INTO photos (id, filename, original_name, lat, lng, caption, stop_id)
-      VALUES (?, ?, ?, ?, ?, ?, ?)
-    `).run(photoId, req.file.filename, req.file.originalname, lat || null, lng || null, caption || '', stop_id || null);
+      INSERT INTO photos (id, filename, original_name, lat, lng, caption, stop_id, story_order)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(photoId, req.file.filename, req.file.originalname, lat || null, lng || null, caption || '', stop_id || null, storyOrder);
 
     const photo = db.prepare('SELECT * FROM photos WHERE id = ?').get(photoId);
 
@@ -872,11 +934,15 @@ app.post('/api/photos', isAdmin, upload.single('photo'), async (req, res) => {
   } catch (err) {
     console.error('Media processing error:', err);
 
+    // Auto-assign story_order (max + 1)
+    const maxOrder = db.prepare('SELECT MAX(story_order) as max FROM photos WHERE include_in_story = 1').get();
+    const storyOrder = (maxOrder.max || 0) + 1;
+
     // If processing fails, save the original file
     db.prepare(`
-      INSERT INTO photos (id, filename, original_name, lat, lng, caption, stop_id)
-      VALUES (?, ?, ?, ?, ?, ?, ?)
-    `).run(photoId, req.file.filename, req.file.originalname, lat || null, lng || null, caption || '', stop_id || null);
+      INSERT INTO photos (id, filename, original_name, lat, lng, caption, stop_id, story_order)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(photoId, req.file.filename, req.file.originalname, lat || null, lng || null, caption || '', stop_id || null, storyOrder);
 
     const photo = db.prepare('SELECT * FROM photos WHERE id = ?').get(photoId);
 
@@ -911,33 +977,33 @@ app.delete('/api/photos/:id', isAdmin, (req, res) => {
 // API ROUTES - STORY
 // ============================================
 
-// Get story items (photos + text slides) ordered by route
+// Get story items (photos + text slides) ordered by admin-specified order
 app.get('/api/story', isAuthenticated, (req, res) => {
-  // Get all photos included in story with their stop order
+  // Get all photos included in story
   const photos = db.prepare(`
-    SELECT p.*, s.order_index as stop_order
+    SELECT p.*
     FROM photos p
-    LEFT JOIN stops s ON p.stop_id = s.id
     WHERE p.include_in_story = 1
-    ORDER BY s.order_index ASC, p.uploaded_at ASC
+    ORDER BY p.story_order ASC NULLS LAST, p.uploaded_at ASC
   `).all();
 
   // Get all text slides
   const textSlides = db.prepare(`
-    SELECT t.*, s.order_index as stop_order
+    SELECT t.*
     FROM story_text_slides t
-    LEFT JOIN stops s ON t.stop_id = s.id
-    ORDER BY s.order_index ASC, t.created_at ASC
+    ORDER BY t.story_order ASC NULLS LAST, t.created_at ASC
   `).all();
 
-  // Combine and sort by route order
+  // Combine and sort by story_order
   const storyItems = [
     ...photos.map(p => ({ ...p, type: 'media' })),
     ...textSlides.map(t => ({ ...t, type: 'text' }))
   ].sort((a, b) => {
-    // Sort by stop order, then by creation time
-    if (a.stop_order !== b.stop_order) {
-      return (a.stop_order || 999) - (b.stop_order || 999);
+    // Sort by story_order (nulls last), then by creation time
+    const aOrder = a.story_order ?? 999999;
+    const bOrder = b.story_order ?? 999999;
+    if (aOrder !== bOrder) {
+      return aOrder - bOrder;
     }
     const aTime = a.uploaded_at || a.created_at;
     const bTime = b.uploaded_at || b.created_at;
@@ -996,6 +1062,31 @@ app.delete('/api/story/text-slide/:id', isAdmin, (req, res) => {
   db.prepare('DELETE FROM story_text_slides WHERE id = ?').run(id);
   io.emit('story_updated');
   res.json({ success: true });
+});
+
+// Reorder story items
+app.post('/api/story/reorder', isAdmin, (req, res) => {
+  const { items } = req.body; // Array of { id, type, order }
+
+  if (!items || !Array.isArray(items)) {
+    return res.status(400).json({ error: 'items array required' });
+  }
+
+  try {
+    items.forEach(item => {
+      if (item.type === 'media') {
+        db.prepare('UPDATE photos SET story_order = ? WHERE id = ?').run(item.order, item.id);
+      } else if (item.type === 'text') {
+        db.prepare('UPDATE story_text_slides SET story_order = ? WHERE id = ?').run(item.order, item.id);
+      }
+    });
+
+    io.emit('story_updated');
+    res.json({ success: true });
+  } catch (err) {
+    console.error('Failed to reorder story:', err);
+    res.status(500).json({ error: 'Failed to reorder story' });
+  }
 });
 
 // ============================================
