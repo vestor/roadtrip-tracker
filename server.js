@@ -852,16 +852,21 @@ app.post('/api/photos', isAdmin, upload.single('photo'), async (req, res) => {
         await new Promise((resolve, reject) => {
           ffmpeg(inputPath)
             .outputOptions([
-              '-c:v libx264',           // H.264 codec
+              '-c:v libx264',           // H.264 codec (universal compatibility)
+              '-profile:v baseline',    // Baseline profile for maximum mobile compatibility
+              '-level 3.0',             // Compatible with all devices
               '-preset faster',         // Faster encoding
-              '-crf 26',                // Quality (26 = good quality, better than 28)
+              '-crf 26',                // Quality (26 = good quality)
               '-maxrate 2M',            // Max bitrate for consistent streaming
               '-bufsize 4M',            // Buffer size
-              '-vf scale=-2:720',       // Scale to 720p height, maintain aspect ratio
+              '-vf scale=trunc(iw/2)*2:trunc(ih/2)*2,scale=-2:720', // Ensure even dimensions and 720p
               '-c:a aac',               // AAC audio codec
-              '-b:a 96k',               // Audio bitrate (reduced from 128k)
+              '-b:a 96k',               // Audio bitrate
+              '-ar 44100',              // Audio sample rate (44.1kHz standard)
+              '-ac 2',                  // Stereo audio
               '-movflags +faststart',   // Enable fast start for web playback
-              '-pix_fmt yuv420p'        // Ensure compatibility
+              '-pix_fmt yuv420p',       // Ensure compatibility
+              '-strict experimental'    // Allow experimental codecs if needed
             ])
             .output(outputPath + '.tmp')
             .on('start', (cmd) => {
@@ -1439,14 +1444,14 @@ app.get('/admin', (req, res) => {
 // VIDEO RE-COMPRESSION MIGRATION
 // ============================================
 async function recompressExistingVideos() {
-  // Check if migration already ran
-  const migrationCheck = db.prepare('SELECT value FROM settings WHERE key = ?').get('videos_recompressed_v1');
+  // Check if migration already ran (v2 = mobile-compatible baseline profile)
+  const migrationCheck = db.prepare('SELECT value FROM settings WHERE key = ?').get('videos_recompressed_v2');
   if (migrationCheck && migrationCheck.value === '1') {
-    console.log('✓ Video re-compression migration already completed');
+    console.log('✓ Video re-compression migration (v2) already completed');
     return;
   }
 
-  console.log('🎥 Starting one-time video re-compression migration...');
+  console.log('🎥 Starting video re-compression migration (v2 - mobile compatible)...');
 
   try {
     // Get all photos from database
@@ -1459,7 +1464,7 @@ async function recompressExistingVideos() {
 
     if (videoFiles.length === 0) {
       console.log('✓ No videos found to re-compress');
-      db.prepare('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)').run('videos_recompressed_v1', '1');
+      db.prepare('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)').run('videos_recompressed_v2', '1');
       return;
     }
 
@@ -1479,15 +1484,20 @@ async function recompressExistingVideos() {
           ffmpeg(inputPath)
             .outputOptions([
               '-c:v libx264',
+              '-profile:v baseline',    // Baseline profile for mobile compatibility
+              '-level 3.0',
               '-preset faster',
               '-crf 26',
               '-maxrate 2M',
               '-bufsize 4M',
-              '-vf scale=-2:720',
+              '-vf scale=trunc(iw/2)*2:trunc(ih/2)*2,scale=-2:720',
               '-c:a aac',
               '-b:a 96k',
+              '-ar 44100',
+              '-ac 2',
               '-movflags +faststart',
-              '-pix_fmt yuv420p'
+              '-pix_fmt yuv420p',
+              '-strict experimental'
             ])
             .output(tempPath)
             .on('end', () => {
@@ -1517,7 +1527,7 @@ async function recompressExistingVideos() {
     console.log(`\n✓ Video re-compression complete: ${processed} succeeded, ${failed} failed`);
 
     // Mark migration as complete
-    db.prepare('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)').run('videos_recompressed_v1', '1');
+    db.prepare('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)').run('videos_recompressed_v2', '1');
 
   } catch (err) {
     console.error('✗ Video re-compression migration failed:', err);
