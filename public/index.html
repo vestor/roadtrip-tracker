@@ -364,6 +364,264 @@
         .legend-line.bhutan { background: #f97316; }
         .legend-line.heartland { background: #a855f7; }
         .legend-line.live { background: var(--accent-green); }
+
+        /* Mobile Responsive Styles */
+        @media (max-width: 768px) {
+            /* Header mobile */
+            .header {
+                padding: 15px 20px;
+                flex-direction: column;
+                align-items: stretch;
+                gap: 12px;
+            }
+            .header-left h1 {
+                font-size: 1.5rem;
+                text-align: center;
+            }
+            .header-left .subtitle {
+                text-align: center;
+                margin-top: 4px;
+            }
+            .header-right {
+                flex-direction: column;
+                gap: 10px;
+            }
+            .user-info {
+                justify-content: center;
+                width: 100%;
+            }
+            .admin-link, .logout-btn {
+                width: 100%;
+                text-align: center;
+                padding: 10px;
+            }
+
+            /* Stats bar mobile */
+            .stats-bar {
+                gap: 15px;
+                padding: 15px;
+            }
+            .stat-value {
+                font-size: 1.5rem;
+            }
+            .stat-label {
+                font-size: 0.65rem;
+            }
+
+            /* Banners mobile */
+            .live-location-banner,
+            .current-leg-banner {
+                flex-direction: column;
+                padding: 10px 15px;
+                text-align: center;
+                gap: 8px;
+            }
+            .live-location-banner small,
+            .leg-info small {
+                display: block;
+                margin-top: 4px;
+            }
+            .leg-icon {
+                font-size: 1.2rem;
+            }
+
+            /* Container mobile */
+            .container {
+                grid-template-columns: 1fr;
+                min-height: auto;
+            }
+            .sidebar {
+                order: -1;
+                max-height: 60vh;
+                overflow-y: auto;
+            }
+
+            /* Map mobile */
+            .map-section {
+                min-height: 400px;
+            }
+            #map {
+                min-height: 400px;
+            }
+            .map-legend {
+                bottom: 10px;
+                left: 10px;
+                padding: 8px 12px;
+                font-size: 0.7rem;
+            }
+            .legend-item {
+                margin-bottom: 3px;
+            }
+            .legend-line {
+                width: 15px;
+                height: 2px;
+            }
+
+            /* Tab bar mobile */
+            .tab-bar {
+                position: sticky;
+                top: 0;
+                z-index: 100;
+            }
+            .tab-btn {
+                padding: 10px 8px;
+                font-size: 0.85rem;
+            }
+
+            /* Day cards mobile */
+            .tab-content {
+                padding: 10px;
+            }
+            .day-card {
+                padding: 12px;
+                margin-bottom: 8px;
+            }
+            .day-date .day-num {
+                font-size: 1.3rem;
+            }
+            .day-date .day-name {
+                font-size: 0.65rem;
+            }
+            .route-info {
+                font-size: 0.85rem;
+                flex-wrap: wrap;
+            }
+            .route-stats {
+                margin-left: 0;
+                width: 100%;
+                justify-content: flex-start;
+                margin-top: 4px;
+            }
+            .note {
+                font-size: 0.7rem;
+            }
+
+            /* Photo grid mobile */
+            .photo-grid {
+                grid-template-columns: 1fr;
+                gap: 12px;
+            }
+            .photo-card {
+                aspect-ratio: 4/3;
+            }
+            .photo-caption {
+                font-size: 0.8rem;
+                padding: 15px 12px 12px;
+            }
+
+            /* Modal mobile */
+            .modal-overlay {
+                padding: 10px;
+            }
+            .photo-modal img,
+            .photo-modal video {
+                max-height: 75vh;
+            }
+            .photo-modal-caption {
+                bottom: -50px;
+                font-size: 0.85rem;
+            }
+            .modal-close {
+                top: -35px;
+                right: -5px;
+                font-size: 1.8rem;
+            }
+
+            /* Login mobile */
+            .login-container {
+                padding: 15px;
+            }
+            .login-box {
+                padding: 30px 20px;
+            }
+            .login-box h1 {
+                font-size: 2rem;
+            }
+            .google-btn {
+                font-size: 0.9rem;
+                padding: 12px 20px;
+            }
+
+            /* Story viewer mobile */
+            #storyViewer button {
+                top: 10px;
+                right: 10px;
+                width: 32px;
+                height: 32px;
+                font-size: 20px;
+            }
+            #storyProgress {
+                top: 8px;
+                left: 8px;
+                right: 8px;
+            }
+            #storyCaption {
+                bottom: 15px;
+                left: 15px;
+                right: 15px;
+                font-size: 0.9rem;
+            }
+            #storyContent img,
+            #storyContent video {
+                max-width: 95vw !important;
+                max-height: 85vh !important;
+            }
+
+            /* Story CTA mobile */
+            #storyCTA {
+                padding: 12px 15px;
+            }
+            #storyCTA div:first-child {
+                font-size: 1rem;
+            }
+            #storyCTA div:last-child {
+                font-size: 0.8rem;
+            }
+
+            /* Credit banner mobile */
+            .header + div {
+                font-size: 0.8rem;
+                padding: 6px 15px;
+            }
+        }
+
+        /* Small mobile devices */
+        @media (max-width: 480px) {
+            .header-left h1 {
+                font-size: 1.3rem;
+            }
+            .stats-bar {
+                gap: 10px;
+                padding: 12px 10px;
+            }
+            .stat-value {
+                font-size: 1.3rem;
+            }
+            .map-section,
+            #map {
+                min-height: 300px;
+            }
+            .sidebar {
+                max-height: 50vh;
+            }
+            .login-box h1 {
+                font-size: 1.8rem;
+            }
+        }
+
+        /* Landscape mobile optimization */
+        @media (max-width: 900px) and (orientation: landscape) {
+            .container {
+                grid-template-columns: 1fr 350px;
+            }
+            .sidebar {
+                order: 0;
+                max-height: calc(100vh - 250px);
+            }
+            .map-section {
+                min-height: calc(100vh - 250px);
+            }
+        }
     </style>
 </head>
 <body>

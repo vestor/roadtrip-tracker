@@ -264,6 +264,238 @@
         .alert-success { background: rgba(34, 197, 94, 0.2); color: var(--accent-green); }
         .alert-error { background: rgba(239, 68, 68, 0.2); color: var(--accent-red); }
         .hidden { display: none !important; }
+
+        /* Mobile Responsive Styles */
+        @media (max-width: 768px) {
+            /* Header mobile */
+            .header {
+                padding: 15px 20px;
+                flex-direction: column;
+                align-items: stretch;
+                gap: 10px;
+            }
+            .header h1 {
+                font-size: 1.4rem;
+                text-align: center;
+            }
+            .header-actions {
+                flex-direction: column;
+                gap: 8px;
+            }
+            .header-actions .btn {
+                width: 100%;
+            }
+
+            /* Container mobile */
+            .container {
+                padding: 15px;
+            }
+
+            /* Tabs mobile */
+            .tabs {
+                flex-wrap: wrap;
+                gap: 4px;
+                padding: 4px;
+            }
+            .tab-btn {
+                flex: 1 1 calc(33.333% - 4px);
+                min-width: 100px;
+                padding: 10px 6px;
+                font-size: 0.8rem;
+            }
+
+            /* Section header mobile */
+            .section-header {
+                flex-direction: column;
+                align-items: stretch;
+                gap: 10px;
+            }
+            .section-title {
+                font-size: 1.3rem;
+                text-align: center;
+            }
+            .section-header .btn {
+                width: 100%;
+            }
+
+            /* Card mobile */
+            .card {
+                padding: 15px;
+                margin-bottom: 12px;
+            }
+
+            /* Stop card mobile */
+            .stop-card {
+                grid-template-columns: auto 1fr;
+                gap: 10px;
+            }
+            .stop-order {
+                font-size: 1.2rem;
+                width: 30px;
+            }
+            .stop-info h3 {
+                font-size: 0.95rem;
+            }
+            .stop-info p {
+                font-size: 0.8rem;
+            }
+            .stop-actions {
+                grid-column: 1 / -1;
+                justify-content: stretch;
+                flex-wrap: wrap;
+            }
+            .stop-actions button {
+                flex: 1;
+                min-width: 120px;
+            }
+
+            /* User card mobile */
+            .user-card {
+                flex-wrap: wrap;
+                gap: 12px;
+            }
+            .user-avatar {
+                width: 45px;
+                height: 45px;
+            }
+            .user-info h3 {
+                font-size: 0.95rem;
+            }
+            .user-info p {
+                font-size: 0.8rem;
+            }
+            .user-card .btn {
+                width: 100%;
+                margin-top: 8px;
+            }
+
+            /* Photo upload area mobile */
+            .photo-upload-area {
+                padding: 30px 20px;
+                font-size: 0.9rem;
+            }
+
+            /* Photo grid mobile */
+            .photo-grid {
+                grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+                gap: 10px;
+            }
+
+            /* Location section mobile */
+            .location-status {
+                padding: 15px;
+            }
+            .location-status h3 {
+                font-size: 1rem;
+            }
+            .location-status p {
+                font-size: 0.85rem;
+            }
+
+            /* Form mobile */
+            .form-row {
+                grid-template-columns: 1fr;
+                gap: 12px;
+            }
+            .form-input,
+            .form-select {
+                font-size: 16px; /* Prevents zoom on iOS */
+            }
+            .form-actions {
+                flex-direction: column;
+            }
+            .form-actions .btn {
+                width: 100%;
+            }
+
+            /* Modal mobile */
+            .modal-overlay {
+                padding: 0;
+            }
+            .modal {
+                margin: 0;
+                border-radius: 0;
+                max-height: 100vh;
+                overflow-y: auto;
+            }
+            .modal-header {
+                padding: 15px 20px;
+            }
+            .modal-title {
+                font-size: 1.3rem;
+            }
+            .modal-body {
+                padding: 15px;
+            }
+
+            /* Debug console mobile */
+            #debugConsole {
+                max-height: 200px;
+                font-size: 0.7rem;
+            }
+
+            /* Story items mobile */
+            #storyItemsContainer .card {
+                padding: 10px;
+            }
+            #storyItemsContainer button {
+                padding: 6px 10px;
+                font-size: 0.8rem;
+            }
+
+            /* Analytics mobile */
+            .analytics-grid {
+                grid-template-columns: 1fr !important;
+                gap: 10px;
+            }
+            .analytics-card {
+                padding: 12px;
+            }
+            .analytics-card h3 {
+                font-size: 0.9rem;
+            }
+            .analytics-value {
+                font-size: 1.2rem;
+            }
+        }
+
+        /* Small mobile devices */
+        @media (max-width: 480px) {
+            .header h1 {
+                font-size: 1.2rem;
+            }
+            .tab-btn {
+                flex: 1 1 calc(50% - 4px);
+                font-size: 0.75rem;
+                padding: 8px 4px;
+            }
+            .section-title {
+                font-size: 1.1rem;
+            }
+            .photo-grid {
+                grid-template-columns: repeat(auto-fill, minmax(100px, 1fr));
+                gap: 8px;
+            }
+            .stop-order {
+                font-size: 1rem;
+                width: 25px;
+            }
+        }
+
+        /* Landscape mobile optimization */
+        @media (max-width: 900px) and (orientation: landscape) {
+            .modal {
+                max-height: 90vh;
+            }
+            .tabs {
+                flex-wrap: nowrap;
+                overflow-x: auto;
+            }
+            .tab-btn {
+                flex: 0 0 auto;
+                min-width: 120px;
+            }
+        }
     </style>
 </head>
 <body>
