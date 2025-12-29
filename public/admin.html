@@ -858,7 +858,8 @@
                         ? `<video src="/uploads/${photo.filename}" controls playsinline muted loop style="width:100%;border-radius:4px"></video>`
                         : `<img src="/uploads/${photo.filename}" alt="${photo.caption || ''}">`
                     }
-                    <button class="delete-btn" onclick="deletePhoto('${photo.id}')">×</button>
+                    <button class="delete-btn" onclick="deletePhoto('${photo.id}')" style="top:10px;right:10px;">×</button>
+                    <button class="delete-btn" onclick="replacePhoto('${photo.id}')" style="top:10px;right:45px;background:var(--accent-blue);width:auto;padding:4px 12px;font-size:0.75rem;">Replace</button>
                     <label style="position:absolute;bottom:10px;left:10px;background:rgba(0,0,0,0.7);color:white;padding:4px 8px;border-radius:4px;font-size:0.75rem;display:flex;align-items:center;gap:6px;cursor:pointer;">
                         <input type="checkbox" ${photo.include_in_story ? 'checked' : ''} onchange="toggleStoryInclusion('${photo.id}', this.checked)" style="cursor:pointer;">
                         <span>📖 Story</span>
@@ -1207,6 +1208,51 @@
                 console.error('Failed to toggle story inclusion:', err);
                 alert('Failed to update story inclusion');
             }
+        }
+
+        async function replacePhoto(photoId) {
+            const photo = photos.find(p => p.id === photoId);
+            if (!photo) return;
+
+            const isVideo = /\.(mp4|mov|avi|webm|mkv)$/i.test(photo.filename);
+            const confirmMsg = `Replace this ${isVideo ? 'video' : 'photo'}?\n\nCaption, location, and other metadata will be preserved.\nOnly the media file will be replaced.`;
+
+            if (!confirm(confirmMsg)) return;
+
+            // Create file input
+            const input = document.createElement('input');
+            input.type = 'file';
+            input.accept = isVideo ? 'video/*' : 'image/*,video/*';
+
+            input.onchange = async (e) => {
+                const file = e.target.files[0];
+                if (!file) return;
+
+                const formData = new FormData();
+                formData.append('photo', file);
+
+                debugLog(`Replacing media for ID: ${photoId}`, 'info');
+
+                try {
+                    const res = await fetch(`/api/photos/${photoId}/replace`, {
+                        method: 'PUT',
+                        body: formData
+                    });
+
+                    if (!res.ok) {
+                        const error = await res.json();
+                        throw new Error(error.error || 'Failed to replace media');
+                    }
+
+                    debugLog('✓ Media replaced successfully', 'success');
+                    loadData(); // Reload to show updated media
+                } catch (err) {
+                    debugLog(`✗ Failed to replace: ${err.message}`, 'error');
+                    alert('Failed to replace media: ' + err.message);
+                }
+            };
+
+            input.click();
         }
 
         // Location sharing

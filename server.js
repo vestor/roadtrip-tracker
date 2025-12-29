@@ -993,17 +993,118 @@ app.post('/api/photos', isAdmin, upload.single('photo'), async (req, res) => {
 app.delete('/api/photos/:id', isAdmin, (req, res) => {
   const { id } = req.params;
   const photo = db.prepare('SELECT * FROM photos WHERE id = ?').get(id);
-  
+
   if (photo) {
     // Delete file
     const filePath = path.join(UPLOADS_DIR, photo.filename);
     if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
-    
+
     db.prepare('DELETE FROM photos WHERE id = ?').run(id);
     io.emit('photo_deleted', id);
   }
-  
+
   res.json({ success: true });
+});
+
+// Replace media file while keeping metadata (caption, location, etc.)
+app.put('/api/photos/:id/replace', isAdmin, upload.single('photo'), async (req, res) => {
+  if (!req.file) {
+    return res.status(400).json({ error: 'No file uploaded' });
+  }
+
+  const { id } = req.params;
+  const existingPhoto = db.prepare('SELECT * FROM photos WHERE id = ?').get(id);
+
+  if (!existingPhoto) {
+    return res.status(404).json({ error: 'Photo not found' });
+  }
+
+  try {
+    const inputPath = req.file.path;
+    const isVideo = req.file.mimetype.startsWith('video/');
+    const newFilename = req.file.filename;
+    const outputPath = path.join(UPLOADS_DIR, newFilename);
+
+    console.log('Replacing media:', {
+      id,
+      oldFilename: existingPhoto.filename,
+      newFilename,
+      isVideo
+    });
+
+    // Process video or image (same logic as upload)
+    if (isVideo) {
+      console.log('Compressing replacement video...');
+      await new Promise((resolve, reject) => {
+        ffmpeg(inputPath)
+          .outputOptions([
+            '-c:v libx264',
+            '-profile:v baseline',
+            '-level 3.0',
+            '-preset faster',
+            '-crf 26',
+            '-maxrate 2M',
+            '-bufsize 4M',
+            '-vf scale=trunc(iw/2)*2:trunc(ih/2)*2,scale=-2:720',
+            '-c:a aac',
+            '-b:a 96k',
+            '-ar 44100',
+            '-ac 2',
+            '-movflags +faststart',
+            '-pix_fmt yuv420p',
+            '-strict experimental'
+          ])
+          .output(outputPath + '.tmp')
+          .on('end', () => {
+            fs.unlinkSync(inputPath);
+            fs.renameSync(outputPath + '.tmp', outputPath);
+            resolve();
+          })
+          .on('error', (err) => {
+            console.error('Video compression error:', err.message);
+            reject(err);
+          })
+          .run();
+      });
+    } else {
+      // Process image with Sharp
+      await sharp(inputPath)
+        .rotate() // Auto-rotate based on EXIF
+        .resize(2048, 2048, {
+          fit: 'inside',
+          withoutEnlargement: true
+        })
+        .jpeg({
+          quality: 85,
+          progressive: true
+        })
+        .toFile(outputPath + '.tmp');
+
+      fs.unlinkSync(inputPath);
+      fs.renameSync(outputPath + '.tmp', outputPath);
+    }
+
+    // Delete old file
+    const oldFilePath = path.join(UPLOADS_DIR, existingPhoto.filename);
+    if (fs.existsSync(oldFilePath)) {
+      fs.unlinkSync(oldFilePath);
+    }
+
+    // Update only the filename in database (keep all other metadata)
+    db.prepare('UPDATE photos SET filename = ?, original_name = ? WHERE id = ?')
+      .run(newFilename, req.file.originalname, id);
+
+    const updatedPhoto = db.prepare('SELECT * FROM photos WHERE id = ?').get(id);
+
+    console.log('Media replaced successfully:', updatedPhoto.filename);
+
+    io.emit('photo_added', updatedPhoto); // Trigger refresh
+    res.json(updatedPhoto);
+
+  } catch (err) {
+    console.error('Media replacement error:', err);
+    res.status(500).json({ error: 'Failed to replace media: ' + err.message });
+  }
 });
 
 // ============================================
