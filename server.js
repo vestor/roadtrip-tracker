@@ -301,6 +301,19 @@ app.get('/uploads/:filename', (req, res) => {
     };
 
     res.writeHead(206, head);
+
+    // Clean up stream on errors or client disconnect
+    file.on('error', (err) => {
+      console.error('Stream error:', err);
+      if (!res.headersSent) {
+        res.status(500).end();
+      }
+    });
+
+    res.on('close', () => {
+      file.destroy();
+    });
+
     file.pipe(res);
   } else {
     // Serve full file for non-video or non-range requests
@@ -309,7 +322,22 @@ app.get('/uploads/:filename', (req, res) => {
       'Content-Type': isVideo ? 'video/mp4' : 'image/jpeg',
     };
     res.writeHead(200, head);
-    fs.createReadStream(filePath).pipe(res);
+
+    const stream = fs.createReadStream(filePath);
+
+    // Clean up stream on errors or client disconnect
+    stream.on('error', (err) => {
+      console.error('Stream error:', err);
+      if (!res.headersSent) {
+        res.status(500).end();
+      }
+    });
+
+    res.on('close', () => {
+      stream.destroy();
+    });
+
+    stream.pipe(res);
   }
 });
 
@@ -1481,6 +1509,14 @@ async function recompressExistingVideos() {
         console.log(`  [${processed + 1}/${videoFiles.length}] Re-compressing: ${video.filename}`);
 
         await new Promise((resolve, reject) => {
+          let timedOut = false;
+          const timeout = setTimeout(() => {
+            timedOut = true;
+            console.error(`  ✗ Timeout: ${video.filename} (took > 5 minutes)`);
+            failed++;
+            resolve();
+          }, 5 * 60 * 1000); // 5 minute timeout per video
+
           ffmpeg(inputPath)
             .outputOptions([
               '-c:v libx264',
@@ -1501,19 +1537,25 @@ async function recompressExistingVideos() {
             ])
             .output(tempPath)
             .on('end', () => {
-              // Replace original with optimized version
-              fs.unlinkSync(inputPath);
-              fs.renameSync(tempPath, inputPath);
-              processed++;
-              console.log(`  ✓ Completed: ${video.filename}`);
-              resolve();
+              clearTimeout(timeout);
+              if (!timedOut) {
+                // Replace original with optimized version
+                fs.unlinkSync(inputPath);
+                fs.renameSync(tempPath, inputPath);
+                processed++;
+                console.log(`  ✓ Completed: ${video.filename}`);
+                resolve();
+              }
             })
             .on('error', (err) => {
-              console.error(`  ✗ Failed: ${video.filename} - ${err.message}`);
-              // Clean up temp file if it exists
-              if (fs.existsSync(tempPath)) fs.unlinkSync(tempPath);
-              failed++;
-              resolve(); // Continue with next video
+              clearTimeout(timeout);
+              if (!timedOut) {
+                console.error(`  ✗ Failed: ${video.filename} - ${err.message}`);
+                // Clean up temp file if it exists
+                if (fs.existsSync(tempPath)) fs.unlinkSync(tempPath);
+                failed++;
+                resolve(); // Continue with next video
+              }
             })
             .run();
         });
