@@ -1343,15 +1343,25 @@
             const fromLoc = getLocationInfo(fromItem);
             const toLoc = getLocationInfo(toItem);
 
+            console.log('🏍️ Location transition check:', {
+                from: fromLoc,
+                to: toLoc
+            });
+
             // Calculate distance between locations
             const distance = fromLoc.lat && fromLoc.lng && toLoc.lat && toLoc.lng
                 ? haversineDistance(fromLoc.lat, fromLoc.lng, toLoc.lat, toLoc.lng)
                 : 0;
 
+            console.log('📏 Distance calculated:', distance, 'km');
+            console.log('🎬 Will show animation:', distance >= MIN_DISTANCE_FOR_ANIMATION);
+
             // If distance > 1km, show route animation; otherwise show simple transition
             if (distance >= MIN_DISTANCE_FOR_ANIMATION) {
+                console.log('🗺️ Starting route animation...');
                 showRouteAnimation(fromLoc, toLoc, distance, callback);
             } else {
+                console.log('📍 Showing simple transition...');
                 showSimpleTransition(fromLoc, toLoc, callback);
             }
         }
@@ -1400,6 +1410,8 @@
             const content = document.getElementById('storyContent');
             const caption = document.getElementById('storyCaption');
 
+            console.log('🎬 showRouteAnimation called:', { fromLoc, toLoc, distance });
+
             caption.textContent = '';
 
             // Create mini map container
@@ -1414,92 +1426,115 @@
                 </div>
             `;
 
-            // Create Leaflet map for animation
-            const storyMap = L.map('storyMap', {
-                zoomControl: false,
-                attributionControl: false,
-                dragging: false,
-                scrollWheelZoom: false,
-                doubleClickZoom: false,
-                touchZoom: false
-            });
+            // Wait for DOM to update, then create map
+            setTimeout(() => {
+                console.log('🗺️ Creating Leaflet map...');
 
-            L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
-                maxZoom: 19
-            }).addTo(storyMap);
+                try {
+                    // Create Leaflet map for animation
+                    const storyMap = L.map('storyMap', {
+                        zoomControl: false,
+                        attributionControl: false,
+                        dragging: false,
+                        scrollWheelZoom: false,
+                        doubleClickZoom: false,
+                        touchZoom: false
+                    });
 
-            // Calculate bounds to fit both points
-            const bounds = L.latLngBounds([fromLoc.lat, fromLoc.lng], [toLoc.lat, toLoc.lng]);
-            storyMap.fitBounds(bounds, { padding: [80, 80] });
+                    console.log('✓ Map created');
 
-            // Draw route line
-            const routeLine = L.polyline([
-                [fromLoc.lat, fromLoc.lng],
-                [toLoc.lat, toLoc.lng]
-            ], {
-                color: '#22c55e',
-                weight: 4,
-                opacity: 0.8,
-                dashArray: '10, 5'
-            }).addTo(storyMap);
+                    L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+                        maxZoom: 19
+                    }).addTo(storyMap);
 
-            // Add start and end markers
-            L.marker([fromLoc.lat, fromLoc.lng], {
-                icon: L.divIcon({
-                    className: 'route-marker',
-                    html: '<div style="width:12px;height:12px;background:#ff6b35;border:2px solid white;border-radius:50%;"></div>',
-                    iconSize: [16, 16],
-                    iconAnchor: [8, 8]
-                })
-            }).addTo(storyMap);
+                    console.log('✓ Tiles added');
 
-            L.marker([toLoc.lat, toLoc.lng], {
-                icon: L.divIcon({
-                    className: 'route-marker',
-                    html: '<div style="width:12px;height:12px;background:#22c55e;border:2px solid white;border-radius:50%;"></div>',
-                    iconSize: [16, 16],
-                    iconAnchor: [8, 8]
-                })
-            }).addTo(storyMap);
+                    // Calculate bounds to fit both points
+                    const bounds = L.latLngBounds([fromLoc.lat, fromLoc.lng], [toLoc.lat, toLoc.lng]);
+                    storyMap.fitBounds(bounds, { padding: [80, 80] });
 
-            // Animate motorcycle along route
-            const bikeMarker = L.marker([fromLoc.lat, fromLoc.lng], {
-                icon: L.divIcon({
-                    className: 'bike-marker',
-                    html: '<div style="font-size:32px;filter:drop-shadow(0 0 8px #22c55e);">🏍️</div>',
-                    iconSize: [32, 32],
-                    iconAnchor: [16, 16]
-                }),
-                zIndexOffset: 1000
-            }).addTo(storyMap);
+                    console.log('✓ Bounds set');
 
-            // Animate from start to end
-            let progress = 0;
-            const steps = 60; // 60 steps for smooth animation
-            const stepDuration = ROUTE_ANIMATION_DURATION / steps;
+                    // Draw route line
+                    const routeLine = L.polyline([
+                        [fromLoc.lat, fromLoc.lng],
+                        [toLoc.lat, toLoc.lng]
+                    ], {
+                        color: '#22c55e',
+                        weight: 4,
+                        opacity: 0.8,
+                        dashArray: '10, 5'
+                    }).addTo(storyMap);
 
-            const animationInterval = setInterval(() => {
-                progress++;
-                const fraction = progress / steps;
+                    // Add start and end markers
+                    L.marker([fromLoc.lat, fromLoc.lng], {
+                        icon: L.divIcon({
+                            className: 'route-marker',
+                            html: '<div style="width:12px;height:12px;background:#ff6b35;border:2px solid white;border-radius:50%;"></div>',
+                            iconSize: [16, 16],
+                            iconAnchor: [8, 8]
+                        })
+                    }).addTo(storyMap);
 
-                // Interpolate position
-                const lat = fromLoc.lat + (toLoc.lat - fromLoc.lat) * fraction;
-                const lng = fromLoc.lng + (toLoc.lng - fromLoc.lng) * fraction;
+                    L.marker([toLoc.lat, toLoc.lng], {
+                        icon: L.divIcon({
+                            className: 'route-marker',
+                            html: '<div style="width:12px;height:12px;background:#22c55e;border:2px solid white;border-radius:50%;"></div>',
+                            iconSize: [16, 16],
+                            iconAnchor: [8, 8]
+                        })
+                    }).addTo(storyMap);
 
-                bikeMarker.setLatLng([lat, lng]);
+                    console.log('✓ Markers added');
 
-                if (progress >= steps) {
-                    clearInterval(animationInterval);
-                    // Clean up map and proceed to next slide
-                    setTimeout(() => {
-                        storyMap.remove();
-                        callback();
-                    }, 500);
+                    // Animate motorcycle along route
+                    const bikeMarker = L.marker([fromLoc.lat, fromLoc.lng], {
+                        icon: L.divIcon({
+                            className: 'bike-marker',
+                            html: '<div style="font-size:32px;filter:drop-shadow(0 0 8px #22c55e);">🏍️</div>',
+                            iconSize: [32, 32],
+                            iconAnchor: [16, 16]
+                        }),
+                        zIndexOffset: 1000
+                    }).addTo(storyMap);
+
+                    console.log('✓ Bike marker added, starting animation...');
+
+                    // Animate from start to end
+                    let progress = 0;
+                    const steps = 60; // 60 steps for smooth animation
+                    const stepDuration = ROUTE_ANIMATION_DURATION / steps;
+
+                    const animationInterval = setInterval(() => {
+                        progress++;
+                        const fraction = progress / steps;
+
+                        // Interpolate position
+                        const lat = fromLoc.lat + (toLoc.lat - fromLoc.lat) * fraction;
+                        const lng = fromLoc.lng + (toLoc.lng - fromLoc.lng) * fraction;
+
+                        bikeMarker.setLatLng([lat, lng]);
+
+                        if (progress >= steps) {
+                            clearInterval(animationInterval);
+                            console.log('✓ Animation complete!');
+                            // Clean up map and proceed to next slide
+                            setTimeout(() => {
+                                storyMap.remove();
+                                callback();
+                            }, 500);
+                        }
+                    }, stepDuration);
+
+                    // Store interval for cleanup if user skips
+                    storyTimer = { interval: animationInterval, map: storyMap };
+
+                } catch (error) {
+                    console.error('❌ Error creating map animation:', error);
+                    // Fallback to simple transition
+                    showSimpleTransition(fromLoc, toLoc, callback);
                 }
-            }, stepDuration);
-
-            // Store interval for cleanup if user skips
-            storyTimer = { interval: animationInterval, map: storyMap };
+            }, 100); // Give DOM time to render
         }
 
         function showStorySlide(index, skipTransition = false) {
