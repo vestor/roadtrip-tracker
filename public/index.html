@@ -747,11 +747,23 @@
 
     <!-- Story Viewer -->
     <div id="storyViewer" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:#000; z-index:10000;">
+        <!-- Debug Console (for troubleshooting) -->
+        <div id="storyDebugConsole" style="position:absolute; bottom:80px; left:10px; right:10px; max-height:150px; background:rgba(0,0,0,0.9); border:1px solid #22c55e; border-radius:8px; padding:10px; overflow-y:auto; z-index:10003; font-family:monospace; font-size:10px; color:#22c55e; display:none;">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:5px; padding-bottom:5px; border-bottom:1px solid rgba(34,197,94,0.3);">
+                <span style="font-weight:bold;">Debug Console</span>
+                <button onclick="document.getElementById('storyDebugConsole').style.display='none'" style="background:none; border:none; color:#ef4444; cursor:pointer; font-size:16px;">×</button>
+            </div>
+            <div id="storyDebugLogs" style="font-size:11px; line-height:1.4;"></div>
+        </div>
+
         <!-- Progress bars -->
         <div id="storyProgress" style="position:absolute; top:10px; left:10px; right:10px; display:flex; gap:4px; z-index:10002;"></div>
 
         <!-- Close button -->
         <button onclick="closeStory()" style="position:absolute; top:15px; right:15px; background:rgba(0,0,0,0.5); border:none; color:white; width:36px; height:36px; border-radius:50%; font-size:24px; cursor:pointer; z-index:10002;">×</button>
+
+        <!-- Debug toggle button -->
+        <button onclick="toggleDebugConsole()" style="position:absolute; top:15px; right:60px; background:rgba(34,197,94,0.5); border:none; color:white; width:36px; height:36px; border-radius:50%; font-size:14px; cursor:pointer; z-index:10002; font-weight:bold;">🐛</button>
 
         <!-- Content container -->
         <div id="storyContent" style="width:100%; height:100%; display:flex; align-items:center; justify-content:center; position:relative;">
@@ -1244,6 +1256,29 @@
         const ROUTE_ANIMATION_DURATION = 3000; // 3 seconds for route animation
         const MIN_DISTANCE_FOR_ANIMATION = 1; // Minimum 1km to show route animation
 
+        // Debug logging for story
+        function storyLog(message, data = null) {
+            console.log(message, data || '');
+
+            const debugConsole = document.getElementById('storyDebugLogs');
+            if (debugConsole) {
+                const timestamp = new Date().toLocaleTimeString();
+                const logEntry = document.createElement('div');
+                logEntry.style.marginBottom = '3px';
+                logEntry.innerHTML = `<span style="color:#888">[${timestamp}]</span> ${message}`;
+                if (data) {
+                    logEntry.innerHTML += ` <span style="color:#f7c948">${JSON.stringify(data)}</span>`;
+                }
+                debugConsole.appendChild(logEntry);
+                debugConsole.scrollTop = debugConsole.scrollHeight;
+            }
+        }
+
+        function toggleDebugConsole() {
+            const console = document.getElementById('storyDebugConsole');
+            console.style.display = console.style.display === 'none' ? 'block' : 'none';
+        }
+
         async function loadStory() {
             try {
                 const res = await fetch('/api/story');
@@ -1267,6 +1302,16 @@
             currentStoryIndex = 0;
             storyPaused = false;
             document.getElementById('storyViewer').style.display = 'block';
+
+            // Clear debug logs
+            const debugLogs = document.getElementById('storyDebugLogs');
+            if (debugLogs) debugLogs.innerHTML = '';
+
+            // Show debug console automatically
+            document.getElementById('storyDebugConsole').style.display = 'block';
+
+            storyLog('📖 Story opened', { totalItems: storyItems.length });
+
             renderStoryProgress();
             showStorySlide(0);
         }
@@ -1343,9 +1388,9 @@
             const fromLoc = getLocationInfo(fromItem);
             const toLoc = getLocationInfo(toItem);
 
-            console.log('🏍️ Location transition check:', {
-                from: fromLoc,
-                to: toLoc
+            storyLog('🏍️ Location transition check', {
+                from: { city: fromLoc?.city, stop_id: fromLoc?.stop_id, lat: fromLoc?.lat, lng: fromLoc?.lng },
+                to: { city: toLoc?.city, stop_id: toLoc?.stop_id, lat: toLoc?.lat, lng: toLoc?.lng }
             });
 
             // Calculate distance between locations
@@ -1353,15 +1398,15 @@
                 ? haversineDistance(fromLoc.lat, fromLoc.lng, toLoc.lat, toLoc.lng)
                 : 0;
 
-            console.log('📏 Distance calculated:', distance, 'km');
-            console.log('🎬 Will show animation:', distance >= MIN_DISTANCE_FOR_ANIMATION);
+            storyLog(`📏 Distance: ${distance.toFixed(2)} km`);
+            storyLog(`🎬 Animation: ${distance >= MIN_DISTANCE_FOR_ANIMATION ? 'YES' : 'NO'}`);
 
             // If distance > 1km, show route animation; otherwise show simple transition
             if (distance >= MIN_DISTANCE_FOR_ANIMATION) {
-                console.log('🗺️ Starting route animation...');
+                storyLog('🗺️ Starting route animation...');
                 showRouteAnimation(fromLoc, toLoc, distance, callback);
             } else {
-                console.log('📍 Showing simple transition...');
+                storyLog('📍 Showing simple transition...');
                 showSimpleTransition(fromLoc, toLoc, callback);
             }
         }
@@ -1410,7 +1455,7 @@
             const content = document.getElementById('storyContent');
             const caption = document.getElementById('storyCaption');
 
-            console.log('🎬 showRouteAnimation called:', { fromLoc, toLoc, distance });
+            storyLog('🎬 showRouteAnimation called');
 
             caption.textContent = '';
 
@@ -1428,7 +1473,7 @@
 
             // Wait for DOM to update, then create map
             setTimeout(() => {
-                console.log('🗺️ Creating Leaflet map...');
+                storyLog('🗺️ Creating Leaflet map...');
 
                 try {
                     // Create Leaflet map for animation
@@ -1441,19 +1486,19 @@
                         touchZoom: false
                     });
 
-                    console.log('✓ Map created');
+                    storyLog('✓ Map created');
 
                     L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
                         maxZoom: 19
                     }).addTo(storyMap);
 
-                    console.log('✓ Tiles added');
+                    storyLog('✓ Tiles added');
 
                     // Calculate bounds to fit both points
                     const bounds = L.latLngBounds([fromLoc.lat, fromLoc.lng], [toLoc.lat, toLoc.lng]);
                     storyMap.fitBounds(bounds, { padding: [80, 80] });
 
-                    console.log('✓ Bounds set');
+                    storyLog('✓ Bounds set');
 
                     // Draw route line
                     const routeLine = L.polyline([
@@ -1485,7 +1530,7 @@
                         })
                     }).addTo(storyMap);
 
-                    console.log('✓ Markers added');
+                    storyLog('✓ Markers added');
 
                     // Animate motorcycle along route
                     const bikeMarker = L.marker([fromLoc.lat, fromLoc.lng], {
@@ -1498,7 +1543,7 @@
                         zIndexOffset: 1000
                     }).addTo(storyMap);
 
-                    console.log('✓ Bike marker added, starting animation...');
+                    storyLog('✓ Bike marker added, starting animation...');
 
                     // Animate from start to end
                     let progress = 0;
@@ -1517,7 +1562,7 @@
 
                         if (progress >= steps) {
                             clearInterval(animationInterval);
-                            console.log('✓ Animation complete!');
+                            storyLog('✓ Animation complete!');
                             // Clean up map and proceed to next slide
                             setTimeout(() => {
                                 storyMap.remove();
@@ -1530,6 +1575,7 @@
                     storyTimer = { interval: animationInterval, map: storyMap };
 
                 } catch (error) {
+                    storyLog('❌ Error: ' + error.message);
                     console.error('❌ Error creating map animation:', error);
                     // Fallback to simple transition
                     showSimpleTransition(fromLoc, toLoc, callback);
