@@ -298,6 +298,7 @@ app.get('/uploads/:filename', (req, res) => {
       'Accept-Ranges': 'bytes',
       'Content-Length': chunksize,
       'Content-Type': 'video/mp4',
+      'Cache-Control': 'public, max-age=31536000, immutable', // 1 year cache
     };
 
     res.writeHead(206, head);
@@ -320,6 +321,8 @@ app.get('/uploads/:filename', (req, res) => {
     const head = {
       'Content-Length': fileSize,
       'Content-Type': isVideo ? 'video/mp4' : 'image/jpeg',
+      'Cache-Control': 'public, max-age=31536000, immutable', // 1 year cache
+      'ETag': `"${stat.mtime.getTime()}-${fileSize}"`, // Generate ETag from mtime and size
     };
     res.writeHead(200, head);
 
