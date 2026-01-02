@@ -1593,6 +1593,13 @@
             const item = storyItems[index];
             const prevItem = index > 0 ? storyItems[index - 1] : null;
 
+            storyLog(`📄 Slide ${index + 1}/${storyItems.length}`, {
+                type: item.type,
+                stop_id: item.stop_id,
+                has_lat_lng: !!(item.lat && item.lng),
+                skipTransition
+            });
+
             // Check if we need to show location transition
             if (!skipTransition && prevItem && hasLocationChanged(prevItem, item)) {
                 showLocationTransition(prevItem, item, () => {
@@ -1603,6 +1610,15 @@
             }
 
             // No transition needed, show content directly
+            if (index > 0 && prevItem && !skipTransition) {
+                const prevLoc = getLocationInfo(prevItem);
+                const currLoc = getLocationInfo(item);
+                storyLog('⏭️ No transition needed', {
+                    prevStop: prevLoc?.stop_id,
+                    currStop: currLoc?.stop_id,
+                    same_location: prevLoc?.stop_id === currLoc?.stop_id
+                });
+            }
             showStorySlideContent(index);
         }
 
