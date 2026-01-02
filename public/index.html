@@ -436,9 +436,13 @@
                 overflow-y: visible;
             }
 
-            /* Map mobile - hidden by default */
+            /* Map mobile - smaller, at bottom */
             .map-section {
-                display: none;
+                order: 1;
+                min-height: 300px;
+            }
+            #map {
+                min-height: 300px;
             }
             .map-legend {
                 bottom: 10px;
@@ -601,17 +605,20 @@
 
         /* Landscape mobile optimization */
         @media (max-width: 900px) and (orientation: landscape) {
-            /* Keep map hidden in landscape mobile too */
-            .map-section {
-                display: none;
-            }
             .container {
                 grid-template-columns: 1fr;
             }
             .sidebar {
                 order: -1;
-                max-height: calc(100vh - 200px);
+                max-height: 50vh;
                 overflow-y: auto;
+            }
+            .map-section {
+                order: 1;
+                min-height: 50vh;
+            }
+            #map {
+                min-height: 50vh;
             }
         }
     </style>
@@ -949,8 +956,8 @@
                 const isVideo = /\.(mp4|mov|avi|webm|mkv)$/i.test(photo.filename);
                 card.innerHTML = `
                     ${isVideo
-                        ? `<video src="/uploads/${photo.filename}" controls playsinline muted loop style="width:100%;border-radius:8px"></video>`
-                        : `<img src="/uploads/${photo.filename}" alt="${photo.caption || 'Trip photo'}">`
+                        ? `<video src="/uploads/${photo.filename}" controls playsinline muted loop preload="metadata" style="width:100%;border-radius:8px"></video>`
+                        : `<img src="/uploads/${photo.filename}" alt="${photo.caption || 'Trip photo'}" loading="lazy">`
                     }
                     ${photo.caption ? `<div class="photo-caption">${photo.caption}</div>` : ''}
                 `;
@@ -1234,6 +1241,8 @@
         const PHOTO_DURATION = 5000; // 5 seconds per photo
         const TEXT_DURATION = 4000; // 4 seconds per text slide
         const LOCATION_TRANSITION_DURATION = 2000; // 2 seconds for location transitions
+        const ROUTE_ANIMATION_DURATION = 3000; // 3 seconds for route animation
+        const MIN_DISTANCE_FOR_ANIMATION = 1; // Minimum 1km to show route animation
 
         async function loadStory() {
             try {
@@ -1264,7 +1273,22 @@
 
         function closeStory() {
             document.getElementById('storyViewer').style.display = 'none';
-            if (storyTimer) clearTimeout(storyTimer);
+
+            // Clean up timer/animation
+            if (storyTimer) {
+                if (typeof storyTimer === 'object' && storyTimer.interval) {
+                    // Route animation cleanup
+                    clearInterval(storyTimer.interval);
+                    if (storyTimer.map) {
+                        storyTimer.map.remove();
+                    }
+                } else {
+                    // Regular timer cleanup
+                    clearTimeout(storyTimer);
+                }
+                storyTimer = null;
+            }
+
             // Stop any playing videos
             const videos = document.getElementById('storyContent').querySelectorAll('video');
             videos.forEach(v => v.pause());
@@ -1319,6 +1343,20 @@
             const fromLoc = getLocationInfo(fromItem);
             const toLoc = getLocationInfo(toItem);
 
+            // Calculate distance between locations
+            const distance = fromLoc.lat && fromLoc.lng && toLoc.lat && toLoc.lng
+                ? haversineDistance(fromLoc.lat, fromLoc.lng, toLoc.lat, toLoc.lng)
+                : 0;
+
+            // If distance > 1km, show route animation; otherwise show simple transition
+            if (distance >= MIN_DISTANCE_FOR_ANIMATION) {
+                showRouteAnimation(fromLoc, toLoc, distance, callback);
+            } else {
+                showSimpleTransition(fromLoc, toLoc, callback);
+            }
+        }
+
+        function showSimpleTransition(fromLoc, toLoc, callback) {
             const content = document.getElementById('storyContent');
             const caption = document.getElementById('storyCaption');
 
@@ -1358,6 +1396,112 @@
             }, LOCATION_TRANSITION_DURATION);
         }
 
+        function showRouteAnimation(fromLoc, toLoc, distance, callback) {
+            const content = document.getElementById('storyContent');
+            const caption = document.getElementById('storyCaption');
+
+            caption.textContent = '';
+
+            // Create mini map container
+            content.innerHTML = `
+                <div style="width:100%; height:100%; position:relative; background:#000;">
+                    <div id="storyMap" style="width:100%; height:100%; position:absolute; top:0; left:0;"></div>
+                    <div style="position:absolute; top:20px; left:20px; right:20px; background:rgba(0,0,0,0.7); padding:15px 20px; border-radius:12px; text-align:center; z-index:1000;">
+                        <div style="font-size:1.2rem; color:var(--accent-orange); font-weight:600; margin-bottom:5px;">${fromLoc.city}</div>
+                        <div style="font-size:0.9rem; color:rgba(255,255,255,0.7);">→ ${Math.round(distance)} km →</div>
+                        <div style="font-size:1.2rem; color:var(--accent-green); font-weight:600; margin-top:5px;">${toLoc.city}</div>
+                    </div>
+                </div>
+            `;
+
+            // Create Leaflet map for animation
+            const storyMap = L.map('storyMap', {
+                zoomControl: false,
+                attributionControl: false,
+                dragging: false,
+                scrollWheelZoom: false,
+                doubleClickZoom: false,
+                touchZoom: false
+            });
+
+            L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+                maxZoom: 19
+            }).addTo(storyMap);
+
+            // Calculate bounds to fit both points
+            const bounds = L.latLngBounds([fromLoc.lat, fromLoc.lng], [toLoc.lat, toLoc.lng]);
+            storyMap.fitBounds(bounds, { padding: [80, 80] });
+
+            // Draw route line
+            const routeLine = L.polyline([
+                [fromLoc.lat, fromLoc.lng],
+                [toLoc.lat, toLoc.lng]
+            ], {
+                color: '#22c55e',
+                weight: 4,
+                opacity: 0.8,
+                dashArray: '10, 5'
+            }).addTo(storyMap);
+
+            // Add start and end markers
+            L.marker([fromLoc.lat, fromLoc.lng], {
+                icon: L.divIcon({
+                    className: 'route-marker',
+                    html: '<div style="width:12px;height:12px;background:#ff6b35;border:2px solid white;border-radius:50%;"></div>',
+                    iconSize: [16, 16],
+                    iconAnchor: [8, 8]
+                })
+            }).addTo(storyMap);
+
+            L.marker([toLoc.lat, toLoc.lng], {
+                icon: L.divIcon({
+                    className: 'route-marker',
+                    html: '<div style="width:12px;height:12px;background:#22c55e;border:2px solid white;border-radius:50%;"></div>',
+                    iconSize: [16, 16],
+                    iconAnchor: [8, 8]
+                })
+            }).addTo(storyMap);
+
+            // Animate motorcycle along route
+            const bikeMarker = L.marker([fromLoc.lat, fromLoc.lng], {
+                icon: L.divIcon({
+                    className: 'bike-marker',
+                    html: '<div style="font-size:32px;filter:drop-shadow(0 0 8px #22c55e);">🏍️</div>',
+                    iconSize: [32, 32],
+                    iconAnchor: [16, 16]
+                }),
+                zIndexOffset: 1000
+            }).addTo(storyMap);
+
+            // Animate from start to end
+            let progress = 0;
+            const steps = 60; // 60 steps for smooth animation
+            const stepDuration = ROUTE_ANIMATION_DURATION / steps;
+
+            const animationInterval = setInterval(() => {
+                progress++;
+                const fraction = progress / steps;
+
+                // Interpolate position
+                const lat = fromLoc.lat + (toLoc.lat - fromLoc.lat) * fraction;
+                const lng = fromLoc.lng + (toLoc.lng - fromLoc.lng) * fraction;
+
+                bikeMarker.setLatLng([lat, lng]);
+
+                if (progress >= steps) {
+                    clearInterval(animationInterval);
+                    // Clean up map and proceed to next slide
+                    setTimeout(() => {
+                        storyMap.remove();
+                        callback();
+                    }, 500);
+                }
+            }, stepDuration);
+
+            // Store interval for cleanup if user skips
+            storyTimer = { interval: animationInterval, map: storyMap };
+        }
+
         function showStorySlide(index, skipTransition = false) {
             if (index < 0 || index >= storyItems.length) {
                 closeStory();
@@ -1386,8 +1530,18 @@
             const content = document.getElementById('storyContent');
             const caption = document.getElementById('storyCaption');
 
-            // Clear existing timer
-            if (storyTimer) clearTimeout(storyTimer);
+            // Clear existing timer/animation
+            if (storyTimer) {
+                if (typeof storyTimer === 'object' && storyTimer.interval) {
+                    clearInterval(storyTimer.interval);
+                    if (storyTimer.map) {
+                        storyTimer.map.remove();
+                    }
+                } else {
+                    clearTimeout(storyTimer);
+                }
+                storyTimer = null;
+            }
 
             // Update progress bars
             storyItems.forEach((_, i) => {
