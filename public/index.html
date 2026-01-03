@@ -1570,8 +1570,15 @@
                             storyLog('✓ Animation complete!');
                             // Clean up map and proceed to next slide
                             setTimeout(() => {
-                                storyMap.remove();
-                                callback();
+                                try {
+                                    storyMap.remove();
+                                    storyTimer = null; // Clear timer before callback
+                                    storyLog('🎬 Calling callback to show content...');
+                                    callback();
+                                } catch (error) {
+                                    storyLog('❌ Callback error: ' + error.message);
+                                    console.error('Error in animation callback:', error);
+                                }
                             }, 500);
                         }
                     }, stepDuration);
@@ -1628,6 +1635,8 @@
         }
 
         function showStorySlideContent(index) {
+            storyLog('🎞️ showStorySlideContent called', { index: index + 1, total: storyItems.length });
+
             const item = storyItems[index];
             const content = document.getElementById('storyContent');
             const caption = document.getElementById('storyCaption');
@@ -1668,20 +1677,24 @@
                 const isVideo = /\.(mp4|mov|avi|webm|mkv)$/i.test(item.filename);
 
                 if (isVideo) {
+                    storyLog('🎥 Rendering video', { filename: item.filename });
                     content.innerHTML = `<video id="storyVideo" src="/uploads/${item.filename}" playsinline controls style="max-width:100%; max-height:100%; object-fit:contain;"></video>`;
                     const video = document.getElementById('storyVideo');
 
                     video.onloadedmetadata = () => {
+                        storyLog('✓ Video loaded, playing...');
                         video.play();
                         // Auto-advance after video ends
                         video.onended = () => nextSlide();
                     };
                 } else {
+                    storyLog('📷 Rendering photo', { filename: item.filename });
                     content.innerHTML = `<img src="/uploads/${item.filename}" style="max-width:100%; max-height:100%; object-fit:contain;">`;
                     // Auto-advance after PHOTO_DURATION
                     if (!storyPaused) {
                         storyTimer = setTimeout(() => nextSlide(), PHOTO_DURATION);
                     }
+                    storyLog('✓ Photo displayed, timer set');
                 }
 
                 caption.textContent = item.caption || '';
