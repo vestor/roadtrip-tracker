@@ -762,8 +762,8 @@
         <!-- Close button -->
         <button onclick="closeStory()" style="position:absolute; top:15px; right:15px; background:rgba(0,0,0,0.5); border:none; color:white; width:36px; height:36px; border-radius:50%; font-size:24px; cursor:pointer; z-index:10002;">×</button>
 
-        <!-- Debug toggle button -->
-        <button onclick="toggleDebugConsole()" style="position:absolute; top:15px; right:60px; background:rgba(34,197,94,0.5); border:none; color:white; width:36px; height:36px; border-radius:50%; font-size:14px; cursor:pointer; z-index:10002; font-weight:bold;">🐛</button>
+        <!-- Debug toggle button (admin only) -->
+        <button id="debugToggleBtn" onclick="toggleDebugConsole()" style="position:absolute; top:15px; right:60px; background:rgba(34,197,94,0.5); border:none; color:white; width:36px; height:36px; border-radius:50%; font-size:14px; cursor:pointer; z-index:10002; font-weight:bold; display:none;">🐛</button>
 
         <!-- Content container -->
         <div id="storyContent" style="width:100%; height:100%; display:flex; align-items:center; justify-content:center; position:relative;">
@@ -1307,10 +1307,12 @@
             const debugLogs = document.getElementById('storyDebugLogs');
             if (debugLogs) debugLogs.innerHTML = '';
 
-            // Show debug console automatically
-            document.getElementById('storyDebugConsole').style.display = 'block';
-
-            storyLog('📖 Story opened', { totalItems: storyItems.length });
+            // Show debug console and toggle button only for admins
+            if (currentUser && currentUser.role === 'admin') {
+                document.getElementById('storyDebugConsole').style.display = 'block';
+                document.getElementById('debugToggleBtn').style.display = 'block';
+                storyLog('📖 Story opened', { totalItems: storyItems.length });
+            }
 
             renderStoryProgress();
             showStorySlide(0);
