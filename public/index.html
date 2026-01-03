@@ -762,8 +762,8 @@
         <!-- Close button -->
         <button onclick="closeStory()" style="position:absolute; top:15px; right:15px; background:rgba(0,0,0,0.5); border:none; color:white; width:36px; height:36px; border-radius:50%; font-size:24px; cursor:pointer; z-index:10002;">×</button>
 
-        <!-- Debug toggle button -->
-        <button onclick="toggleDebugConsole()" style="position:absolute; top:15px; right:60px; background:rgba(34,197,94,0.5); border:none; color:white; width:36px; height:36px; border-radius:50%; font-size:14px; cursor:pointer; z-index:10002; font-weight:bold;">🐛</button>
+        <!-- Debug toggle button (admin only) -->
+        <button id="debugToggleBtn" onclick="toggleDebugConsole()" style="position:absolute; top:15px; right:60px; background:rgba(34,197,94,0.5); border:none; color:white; width:36px; height:36px; border-radius:50%; font-size:14px; cursor:pointer; z-index:10002; font-weight:bold; display:none;">🐛</button>
 
         <!-- Content container -->
         <div id="storyContent" style="width:100%; height:100%; display:flex; align-items:center; justify-content:center; position:relative;">
@@ -1307,10 +1307,12 @@
             const debugLogs = document.getElementById('storyDebugLogs');
             if (debugLogs) debugLogs.innerHTML = '';
 
-            // Show debug console automatically
-            document.getElementById('storyDebugConsole').style.display = 'block';
-
-            storyLog('📖 Story opened', { totalItems: storyItems.length });
+            // Show debug console and toggle button only for admins
+            if (currentUser && currentUser.role === 'admin') {
+                document.getElementById('storyDebugConsole').style.display = 'block';
+                document.getElementById('debugToggleBtn').style.display = 'block';
+                storyLog('📖 Story opened', { totalItems: storyItems.length });
+            }
 
             renderStoryProgress();
             showStorySlide(0);
@@ -1375,30 +1377,33 @@
             const prevLoc = getLocationInfo(prevItem);
             const currLoc = getLocationInfo(currentItem);
 
-            // No location change if either doesn't have location
-            if (!prevLoc || !currLoc || !prevLoc.city || !currLoc.city) {
+            // Check if both have GPS coordinates (from EXIF or stop)
+            if (!prevLoc || !currLoc || !prevLoc.lat || !prevLoc.lng || !currLoc.lat || !currLoc.lng) {
                 return false;
             }
 
-            // Check if stop_id changed
-            return prevLoc.stop_id !== currLoc.stop_id && prevLoc.stop_id && currLoc.stop_id;
+            // Calculate distance between GPS coordinates
+            const distance = haversineDistance(prevLoc.lat, prevLoc.lng, currLoc.lat, currLoc.lng);
+
+            // Show animation if distance > 1km
+            return distance >= MIN_DISTANCE_FOR_ANIMATION;
         }
 
         function showLocationTransition(fromItem, toItem, callback) {
             const fromLoc = getLocationInfo(fromItem);
             const toLoc = getLocationInfo(toItem);
 
-            storyLog('🏍️ Location transition check', {
-                from: { city: fromLoc?.city, stop_id: fromLoc?.stop_id, lat: fromLoc?.lat, lng: fromLoc?.lng },
-                to: { city: toLoc?.city, stop_id: toLoc?.stop_id, lat: toLoc?.lat, lng: toLoc?.lng }
-            });
-
             // Calculate distance between locations
             const distance = fromLoc.lat && fromLoc.lng && toLoc.lat && toLoc.lng
                 ? haversineDistance(fromLoc.lat, fromLoc.lng, toLoc.lat, toLoc.lng)
                 : 0;
 
-            storyLog(`📏 Distance: ${distance.toFixed(2)} km`);
+            storyLog('🏍️ GPS-based transition', {
+                from: { city: fromLoc?.city || 'Unknown', lat: fromLoc?.lat?.toFixed(4), lng: fromLoc?.lng?.toFixed(4) },
+                to: { city: toLoc?.city || 'Unknown', lat: toLoc?.lat?.toFixed(4), lng: toLoc?.lng?.toFixed(4) },
+                distance: distance.toFixed(2) + ' km'
+            });
+
             storyLog(`🎬 Animation: ${distance >= MIN_DISTANCE_FOR_ANIMATION ? 'YES' : 'NO'}`);
 
             // If distance > 1km, show route animation; otherwise show simple transition
@@ -1406,8 +1411,8 @@
                 storyLog('🗺️ Starting route animation...');
                 showRouteAnimation(fromLoc, toLoc, distance, callback);
             } else {
-                storyLog('📍 Showing simple transition...');
-                showSimpleTransition(fromLoc, toLoc, callback);
+                storyLog('📍 Distance too short, skipping animation');
+                callback();
             }
         }
 
@@ -1464,9 +1469,9 @@
                 <div style="width:100%; height:100%; position:relative; background:#000;">
                     <div id="storyMap" style="width:100%; height:100%; position:absolute; top:0; left:0;"></div>
                     <div style="position:absolute; top:20px; left:20px; right:20px; background:rgba(0,0,0,0.7); padding:15px 20px; border-radius:12px; text-align:center; z-index:1000;">
-                        <div style="font-size:1.2rem; color:var(--accent-orange); font-weight:600; margin-bottom:5px;">${fromLoc.city}</div>
-                        <div style="font-size:0.9rem; color:rgba(255,255,255,0.7);">→ ${Math.round(distance)} km →</div>
-                        <div style="font-size:1.2rem; color:var(--accent-green); font-weight:600; margin-top:5px;">${toLoc.city}</div>
+                        ${fromLoc.city ? `<div style="font-size:1.2rem; color:var(--accent-orange); font-weight:600; margin-bottom:5px;">${fromLoc.city}</div>` : ''}
+                        <div style="font-size:0.9rem; color:rgba(255,255,255,0.7);">🏍️ ${Math.round(distance)} km</div>
+                        ${toLoc.city ? `<div style="font-size:1.2rem; color:var(--accent-green); font-weight:600; margin-top:5px;">${toLoc.city}</div>` : ''}
                     </div>
                 </div>
             `;
