@@ -1299,7 +1299,19 @@
         function openStory() {
             if (storyItems.length === 0) return;
 
-            currentStoryIndex = 0;
+            // Check for saved story position
+            const savedPosition = localStorage.getItem('story_last_position');
+            let startIndex = 0;
+
+            if (savedPosition) {
+                const saved = parseInt(savedPosition, 10);
+                if (saved > 0 && saved < storyItems.length) {
+                    startIndex = saved;
+                    storyLog('📍 Resuming from saved position', { slide: startIndex + 1 });
+                }
+            }
+
+            currentStoryIndex = startIndex;
             storyPaused = false;
             document.getElementById('storyViewer').style.display = 'block';
 
@@ -1311,15 +1323,23 @@
             if (currentUser && currentUser.role === 'admin') {
                 document.getElementById('storyDebugConsole').style.display = 'block';
                 document.getElementById('debugToggleBtn').style.display = 'block';
-                storyLog('📖 Story opened', { totalItems: storyItems.length });
+                storyLog('📖 Story opened', { totalItems: storyItems.length, startIndex: startIndex + 1 });
             }
 
             renderStoryProgress();
-            showStorySlide(0);
+            showStorySlide(startIndex);
         }
 
-        function closeStory() {
+        function closeStory(clearPosition = false) {
             document.getElementById('storyViewer').style.display = 'none';
+
+            // Clear saved position if story completed naturally
+            if (clearPosition) {
+                localStorage.removeItem('story_last_position');
+                storyLog('🏁 Story completed, position cleared');
+            } else {
+                storyLog('💾 Story closed, position saved for resume');
+            }
 
             // Clean up timer/animation
             if (storyTimer) {
@@ -1602,6 +1622,10 @@
             }
 
             currentStoryIndex = index;
+
+            // Save current position for resume functionality
+            localStorage.setItem('story_last_position', index.toString());
+
             const item = storyItems[index];
             const prevItem = index > 0 ? storyItems[index - 1] : null;
 
@@ -1715,7 +1739,8 @@
             if (currentStoryIndex < storyItems.length - 1) {
                 showStorySlide(currentStoryIndex + 1);
             } else {
-                closeStory();
+                // Story completed naturally, clear saved position
+                closeStory(true);
             }
         }
 
