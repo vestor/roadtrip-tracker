@@ -346,6 +346,77 @@ app.get('/uploads/:filename', (req, res) => {
   }
 });
 
+// Serve compressed videos for story playback
+app.get('/uploads/compressed/:filename', (req, res) => {
+  const filePath = path.join(COMPRESSED_DIR, req.params.filename);
+
+  if (!fs.existsSync(filePath)) {
+    return res.status(404).send('Compressed file not found');
+  }
+
+  const stat = fs.statSync(filePath);
+  const fileSize = stat.size;
+  const range = req.headers.range;
+
+  // Compressed videos are always video files
+  const isVideo = true;
+
+  if (range) {
+    // Parse range header for video streaming
+    const parts = range.replace(/bytes=/, "").split("-");
+    const start = parseInt(parts[0], 10);
+    const end = parts[1] ? parseInt(parts[1], 10) : fileSize - 1;
+    const chunksize = (end - start) + 1;
+    const file = fs.createReadStream(filePath, { start, end });
+    const head = {
+      'Content-Range': `bytes ${start}-${end}/${fileSize}`,
+      'Accept-Ranges': 'bytes',
+      'Content-Length': chunksize,
+      'Content-Type': 'video/mp4',
+      'Cache-Control': 'public, max-age=31536000, immutable',
+    };
+
+    res.writeHead(206, head);
+
+    file.on('error', (err) => {
+      console.error('Compressed stream error:', err);
+      if (!res.headersSent) {
+        res.status(500).end();
+      }
+    });
+
+    res.on('close', () => {
+      file.destroy();
+    });
+
+    file.pipe(res);
+  } else {
+    // Serve full compressed file
+    const head = {
+      'Content-Length': fileSize,
+      'Content-Type': 'video/mp4',
+      'Cache-Control': 'public, max-age=31536000, immutable',
+      'ETag': `"${stat.mtime.getTime()}-${fileSize}"`,
+    };
+    res.writeHead(200, head);
+
+    const stream = fs.createReadStream(filePath);
+
+    stream.on('error', (err) => {
+      console.error('Compressed stream error:', err);
+      if (!res.headersSent) {
+        res.status(500).end();
+      }
+    });
+
+    res.on('close', () => {
+      stream.destroy();
+    });
+
+    stream.pipe(res);
+  }
+});
+
 // Session configuration with persistent SQLite storage
 const sessionMiddleware = session({
   store: new SqliteStore({
