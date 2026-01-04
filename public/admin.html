@@ -580,6 +580,18 @@
                 </div>
             </div>
 
+            <!-- Video Compression Tools -->
+            <div style="margin: 20px 0; padding: 20px; background: var(--bg-card); border-radius: 12px; border: 1px solid rgba(255,107,53,0.2);">
+                <h3 style="margin: 0 0 10px 0; font-size: 1rem; color: var(--accent-orange);">🎥 Video Compression Tools</h3>
+                <p style="margin: 0 0 15px 0; font-size: 0.85rem; color: var(--text-secondary);">Create compressed story versions for all existing videos. This will create 540p optimized versions for mobile story playback while keeping originals for normal viewing.</p>
+                <button id="createStoryVersionsBtn" class="btn btn-primary" onclick="createStoryVersions()" style="background: var(--accent-orange);">
+                    📹 Create Story Versions for All Videos
+                </button>
+                <div id="compressionProgress" style="display:none; margin-top: 15px; padding: 15px; background: rgba(0,0,0,0.3); border-radius: 8px;">
+                    <p id="compressionStatus" style="margin: 0; color: var(--accent-green);"></p>
+                </div>
+            </div>
+
             <div class="photo-grid" id="photosContainer"></div>
         </div>
 
@@ -1488,6 +1500,63 @@
             };
 
             input.click();
+        }
+
+        // Create compressed story versions for all videos
+        async function createStoryVersions() {
+            if (!confirm('This will create compressed 540p story versions for all videos. This may take a while. Continue?')) return;
+
+            const btn = document.getElementById('createStoryVersionsBtn');
+            const progress = document.getElementById('compressionProgress');
+            const status = document.getElementById('compressionStatus');
+
+            btn.disabled = true;
+            btn.textContent = '⏳ Processing...';
+            progress.style.display = 'block';
+            status.textContent = 'Starting compression...';
+
+            try {
+                const res = await fetch('/api/videos/create-story-versions', {
+                    method: 'POST'
+                });
+
+                const reader = res.body.getReader();
+                const decoder = new TextDecoder();
+
+                while (true) {
+                    const { done, value } = await reader.read();
+                    if (done) break;
+
+                    const chunk = decoder.decode(value);
+                    const lines = chunk.split('\n');
+
+                    for (const line of lines) {
+                        if (line.startsWith('data: ')) {
+                            const data = JSON.parse(line.slice(6));
+
+                            if (data.status === 'starting') {
+                                status.textContent = `Found ${data.total} videos to process...`;
+                            } else if (data.status === 'processing') {
+                                status.textContent = `Processing ${data.filename}... (${data.processed}/${data.total})`;
+                            } else if (data.status === 'complete') {
+                                status.textContent = `✓ Complete! Processed: ${data.processed}, Skipped: ${data.skipped}, Failed: ${data.failed}`;
+                                setTimeout(() => {
+                                    progress.style.display = 'none';
+                                }, 5000);
+                            }
+                        }
+                    }
+                }
+
+                btn.disabled = false;
+                btn.textContent = '📹 Create Story Versions for All Videos';
+
+            } catch (err) {
+                console.error('Compression error:', err);
+                status.textContent = `✗ Error: ${err.message}`;
+                btn.disabled = false;
+                btn.textContent = '📹 Create Story Versions for All Videos';
+            }
         }
 
         // Location sharing

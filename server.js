@@ -34,6 +34,7 @@ const BASE_URL = process.env.BASE_URL || `http://localhost:${PORT}`;
 // Local dev: ./data (for development)
 const DATA_DIR = process.env.DATA_DIR || (process.env.NODE_ENV === 'production' ? '/var/data' : './data');
 const UPLOADS_DIR = path.join(DATA_DIR, 'uploads');
+const COMPRESSED_DIR = path.join(DATA_DIR, 'uploads', 'compressed');
 const DB_PATH = path.join(DATA_DIR, 'roadtrip.db');
 
 // ============================================
@@ -41,6 +42,7 @@ const DB_PATH = path.join(DATA_DIR, 'roadtrip.db');
 // ============================================
 if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
 if (!fs.existsSync(UPLOADS_DIR)) fs.mkdirSync(UPLOADS_DIR, { recursive: true });
+if (!fs.existsSync(COMPRESSED_DIR)) fs.mkdirSync(COMPRESSED_DIR, { recursive: true });
 
 // ============================================
 // DATABASE SETUP
@@ -877,9 +879,20 @@ app.post('/api/photos', isAdmin, upload.single('photo'), async (req, res) => {
     }
 
     if (isVideo) {
-      // Compress video aggressively for mobile story playback
-      console.log('Starting aggressive video compression for:', req.file.filename);
+      // For videos: save original + create compressed version for stories
+      console.log('Processing video - creating two versions for:', req.file.filename);
+
+      const compressedFilename = req.file.filename;
+      const compressedPath = path.join(COMPRESSED_DIR, compressedFilename);
+
       try {
+        // Step 1: Save original video (move from temp to uploads)
+        // No compression - keep original quality for normal viewing
+        console.log('Saving original video...');
+        // inputPath is already in UPLOADS_DIR from multer, so it's already saved
+
+        // Step 2: Create compressed version for story playback
+        console.log('Creating compressed version for stories...');
         await new Promise((resolve, reject) => {
           ffmpeg(inputPath)
             .outputOptions([
@@ -899,31 +912,31 @@ app.post('/api/photos', isAdmin, upload.single('photo'), async (req, res) => {
               '-pix_fmt yuv420p',       // Ensure compatibility
               '-strict experimental'    // Allow experimental codecs if needed
             ])
-            .output(outputPath + '.tmp')
+            .output(compressedPath)
             .on('start', (cmd) => {
               console.log('FFmpeg command:', cmd);
             })
             .on('progress', (progress) => {
-              console.log('Processing: ' + progress.percent + '% done');
+              console.log('Story version: ' + progress.percent + '% done');
             })
             .on('end', () => {
-              console.log('Video compression completed');
-              // Replace original with compressed version
-              fs.unlinkSync(inputPath);
-              fs.renameSync(outputPath + '.tmp', outputPath);
+              console.log('✓ Compressed story version created');
               resolve();
             })
             .on('error', (err) => {
-              console.error('Video compression error:', err.message);
+              console.error('Story compression error:', err.message);
               reject(err);
             })
             .run();
         });
+
+        console.log('✓ Two versions saved:', {
+          original: outputPath,
+          story: compressedPath
+        });
       } catch (compressionError) {
-        console.error('Video compression failed, saving original:', compressionError.message);
-        // Fallback: Keep original video file if compression fails
-        // The file is already uploaded to inputPath (which equals outputPath)
-        // So we don't need to do anything - just continue
+        console.error('Story compression failed:', compressionError.message);
+        // Original is still saved - story just won't have compressed version
       }
     } else {
       // Compress and resize image (WhatsApp HD style)
@@ -1133,7 +1146,18 @@ app.get('/api/story', isAuthenticated, (req, res) => {
 
   // Combine and sort by story_order
   const storyItems = [
-    ...photos.map(p => ({ ...p, type: 'media' })),
+    ...photos.map(p => {
+      // For videos, use compressed version if available for story playback
+      const isVideo = /\.(mp4|mov|avi|webm|mkv)$/i.test(p.filename);
+      if (isVideo) {
+        const compressedPath = path.join(COMPRESSED_DIR, p.filename);
+        if (fs.existsSync(compressedPath)) {
+          // Use compressed version for story
+          return { ...p, type: 'media', filename: `compressed/${p.filename}` };
+        }
+      }
+      return { ...p, type: 'media' };
+    }),
     ...textSlides.map(t => ({ ...t, type: 'text' }))
   ].sort((a, b) => {
     // Sort by story_order (nulls last), then by creation time
@@ -1223,6 +1247,97 @@ app.post('/api/story/reorder', isAdmin, (req, res) => {
   } catch (err) {
     console.error('Failed to reorder story:', err);
     res.status(500).json({ error: 'Failed to reorder story' });
+  }
+});
+
+// Create compressed story versions for all existing videos
+app.post('/api/videos/create-story-versions', isAdmin, async (req, res) => {
+  try {
+    // Get all video files from database
+    const videos = db.prepare(`
+      SELECT * FROM photos
+      WHERE filename LIKE '%.mp4'
+      OR filename LIKE '%.mov'
+      OR filename LIKE '%.avi'
+      OR filename LIKE '%.webm'
+      OR filename LIKE '%.mkv'
+    `).all();
+
+    if (videos.length === 0) {
+      return res.json({ success: true, message: 'No videos found', processed: 0, failed: 0 });
+    }
+
+    let processed = 0;
+    let failed = 0;
+    let skipped = 0;
+
+    res.write(`data: ${JSON.stringify({ status: 'starting', total: videos.length })}\n\n`);
+
+    for (const video of videos) {
+      const originalPath = path.join(UPLOADS_DIR, video.filename);
+      const compressedPath = path.join(COMPRESSED_DIR, video.filename);
+
+      // Skip if original doesn't exist
+      if (!fs.existsSync(originalPath)) {
+        console.log(`⚠️  Original not found, skipping: ${video.filename}`);
+        skipped++;
+        continue;
+      }
+
+      // Skip if compressed version already exists
+      if (fs.existsSync(compressedPath)) {
+        console.log(`✓ Compressed version already exists, skipping: ${video.filename}`);
+        skipped++;
+        continue;
+      }
+
+      console.log(`📹 Creating story version for: ${video.filename}`);
+      res.write(`data: ${JSON.stringify({ status: 'processing', filename: video.filename, processed, total: videos.length })}\n\n`);
+
+      try {
+        await new Promise((resolve, reject) => {
+          ffmpeg(originalPath)
+            .outputOptions([
+              '-c:v libx264',
+              '-profile:v baseline',
+              '-level 3.0',
+              '-preset ultrafast',
+              '-crf 30',
+              '-maxrate 800k',
+              '-bufsize 1600k',
+              '-vf scale=trunc(iw/2)*2:trunc(ih/2)*2,scale=-2:540',
+              '-c:a aac',
+              '-b:a 64k',
+              '-ar 44100',
+              '-ac 2',
+              '-movflags +faststart',
+              '-pix_fmt yuv420p',
+              '-strict experimental'
+            ])
+            .output(compressedPath)
+            .on('end', () => {
+              console.log(`✓ Story version created: ${video.filename}`);
+              processed++;
+              resolve();
+            })
+            .on('error', (err) => {
+              console.error(`✗ Failed to create story version: ${video.filename}`, err.message);
+              failed++;
+              reject(err);
+            })
+            .run();
+        });
+      } catch (err) {
+        // Error already logged, continue with next video
+      }
+    }
+
+    res.write(`data: ${JSON.stringify({ status: 'complete', processed, failed, skipped })}\n\n`);
+    res.end();
+
+  } catch (err) {
+    console.error('Batch compression error:', err);
+    res.status(500).json({ error: err.message });
   }
 });
 
