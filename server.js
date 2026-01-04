@@ -549,7 +549,7 @@ const storage = multer.diskStorage({
 
 const upload = multer({
   storage,
-  limits: { fileSize: 100 * 1024 * 1024 }, // 100MB for videos
+  limits: { fileSize: 500 * 1024 * 1024 }, // 500MB for large videos
   fileFilter: (req, file, cb) => {
     // Allow images and videos
     const allowedTypes = /jpeg|jpg|png|gif|webp|mp4|mov|avi|webm|mkv/;
@@ -877,8 +877,8 @@ app.post('/api/photos', isAdmin, upload.single('photo'), async (req, res) => {
     }
 
     if (isVideo) {
-      // Compress video (WhatsApp style: 720p, lower bitrate)
-      console.log('Starting video compression for:', req.file.filename);
+      // Compress video aggressively for mobile story playback
+      console.log('Starting aggressive video compression for:', req.file.filename);
       try {
         await new Promise((resolve, reject) => {
           ffmpeg(inputPath)
@@ -886,13 +886,13 @@ app.post('/api/photos', isAdmin, upload.single('photo'), async (req, res) => {
               '-c:v libx264',           // H.264 codec (universal compatibility)
               '-profile:v baseline',    // Baseline profile for maximum mobile compatibility
               '-level 3.0',             // Compatible with all devices
-              '-preset faster',         // Faster encoding
-              '-crf 26',                // Quality (26 = good quality)
-              '-maxrate 2M',            // Max bitrate for consistent streaming
-              '-bufsize 4M',            // Buffer size
-              '-vf scale=trunc(iw/2)*2:trunc(ih/2)*2,scale=-2:720', // Ensure even dimensions and 720p
+              '-preset ultrafast',      // Ultra fast encoding (smaller file size)
+              '-crf 30',                // More compression (30 = balanced quality/size for mobile)
+              '-maxrate 800k',          // Lower max bitrate for mobile networks
+              '-bufsize 1600k',         // Buffer size (2x maxrate)
+              '-vf scale=trunc(iw/2)*2:trunc(ih/2)*2,scale=-2:540', // 540p for mobile (Instagram story size)
               '-c:a aac',               // AAC audio codec
-              '-b:a 96k',               // Audio bitrate
+              '-b:a 64k',               // Lower audio bitrate (still clear)
               '-ar 44100',              // Audio sample rate (44.1kHz standard)
               '-ac 2',                  // Stereo audio
               '-movflags +faststart',   // Enable fast start for web playback
