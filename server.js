@@ -1696,6 +1696,28 @@ app.post('/api/routes/recalculate', isAdmin, async (req, res) => {
   }
 });
 
+// Delete a route segment
+app.delete('/api/routes/:fromStopId/:toStopId', isAdmin, (req, res) => {
+  const { fromStopId, toStopId } = req.params;
+
+  try {
+    const deleted = db.prepare(`
+      DELETE FROM route_segments
+      WHERE from_stop_id = ? AND to_stop_id = ?
+    `).run(fromStopId, toStopId);
+
+    if (deleted.changes === 0) {
+      return res.status(404).json({ error: 'Route not found' });
+    }
+
+    io.emit('routes_updated');
+    res.json({ success: true, message: 'Route deleted' });
+  } catch (err) {
+    console.error('Failed to delete route:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // ============================================
 // SOCKET.IO
 // ============================================
