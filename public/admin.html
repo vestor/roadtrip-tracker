@@ -1668,9 +1668,14 @@
 
                 const list = document.getElementById('routeList');
                 list.innerHTML = routes.map(r => `
-                    <div style="padding:8px;border-bottom:1px solid rgba(255,255,255,0.05);">
-                        <strong>${r.from_city} → ${r.to_city}</strong>
-                        <br><small>${(r.distance_meters/1000).toFixed(1)} km • ${formatDuration(r.duration_seconds)}</small>
+                    <div style="padding:8px;border-bottom:1px solid rgba(255,255,255,0.05);display:flex;justify-content:space-between;align-items:center;">
+                        <div>
+                            <strong>${r.from_city} → ${r.to_city}</strong>
+                            <br><small>${(r.distance_meters/1000).toFixed(1)} km • ${formatDuration(r.duration_seconds)}</small>
+                        </div>
+                        <button class="btn btn-secondary" onclick="deleteRoute('${r.from_stop_id}', '${r.to_stop_id}', '${r.from_city}', '${r.to_city}')" style="padding:4px 12px;font-size:0.75rem;background:var(--accent-red);">
+                            Delete
+                        </button>
                     </div>
                 `).join('');
             } catch (err) {
@@ -1683,6 +1688,25 @@
             const hours = Math.floor(seconds / 3600);
             const mins = Math.floor((seconds % 3600) / 60);
             return hours > 0 ? `${hours}h ${mins}m` : `${mins}m`;
+        }
+
+        async function deleteRoute(fromStopId, toStopId, fromCity, toCity) {
+            if (!confirm(`Delete route from ${fromCity} to ${toCity}?\n\nThis will remove the cached route. You can recalculate it later if needed.`)) return;
+
+            try {
+                const res = await fetch(`/api/routes/${fromStopId}/${toStopId}`, { method: 'DELETE' });
+                const data = await res.json();
+
+                if (res.ok) {
+                    alert('✓ Route deleted successfully');
+                    loadRouteStatus(); // Reload route list
+                } else {
+                    alert('Failed to delete route: ' + data.error);
+                }
+            } catch (err) {
+                console.error('Delete route error:', err);
+                alert('Failed to delete route: ' + err.message);
+            }
         }
 
         // Tabs
