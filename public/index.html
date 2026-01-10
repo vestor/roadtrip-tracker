@@ -1629,34 +1629,14 @@
             localStorage.setItem('story_last_position', index.toString());
 
             const item = storyItems[index];
-            const prevItem = index > 0 ? storyItems[index - 1] : null;
 
             storyLog(`📄 Slide ${index + 1}/${storyItems.length}`, {
                 type: item.type,
                 stop_id: item.stop_id,
-                has_lat_lng: !!(item.lat && item.lng),
-                skipTransition
+                has_lat_lng: !!(item.lat && item.lng)
             });
 
-            // Check if we need to show location transition
-            if (!skipTransition && prevItem && hasLocationChanged(prevItem, item)) {
-                showLocationTransition(prevItem, item, () => {
-                    // After transition, show the actual slide
-                    showStorySlideContent(index);
-                });
-                return;
-            }
-
-            // No transition needed, show content directly
-            if (index > 0 && prevItem && !skipTransition) {
-                const prevLoc = getLocationInfo(prevItem);
-                const currLoc = getLocationInfo(item);
-                storyLog('⏭️ No transition needed', {
-                    prevStop: prevLoc?.stop_id,
-                    currStop: currLoc?.stop_id,
-                    same_location: prevLoc?.stop_id === currLoc?.stop_id
-                });
-            }
+            // Show content directly (no transitions)
             showStorySlideContent(index);
         }
 
@@ -1702,9 +1682,24 @@
             if (item.type === 'media') {
                 const isVideo = /\.(mp4|mov|avi|webm|mkv)$/i.test(item.filename);
 
+                // Get location info for overlay
+                const locationInfo = getLocationInfo(item);
+                const locationText = locationInfo && locationInfo.city ? locationInfo.city : '';
+                const locationOverlay = locationText ? `
+                    <div style="position:absolute; top:80px; left:20px; right:20px; z-index:1000; text-align:center;">
+                        <div style="display:inline-block; background:rgba(0,0,0,0.7); padding:10px 20px; border-radius:20px; backdrop-filter:blur(10px);">
+                            <div style="font-size:0.75rem; color:rgba(255,255,255,0.7); text-transform:uppercase; letter-spacing:1px; margin-bottom:2px;">📍</div>
+                            <div style="font-size:1.1rem; color:white; font-weight:600;">${locationText}</div>
+                        </div>
+                    </div>
+                ` : '';
+
                 if (isVideo) {
-                    storyLog('🎥 Rendering video', { filename: item.filename });
-                    content.innerHTML = `<video id="storyVideo" src="/uploads/${item.filename}" playsinline preload="auto" style="max-width:100%; max-height:100%; object-fit:contain;"></video>`;
+                    storyLog('🎥 Rendering video', { filename: item.filename, location: locationText });
+                    content.innerHTML = `
+                        <video id="storyVideo" src="/uploads/${item.filename}" playsinline preload="auto" style="max-width:100%; max-height:100%; object-fit:contain;"></video>
+                        ${locationOverlay}
+                    `;
                     const video = document.getElementById('storyVideo');
 
                     video.onloadedmetadata = () => {
@@ -1747,8 +1742,11 @@
                     // Preload next video if exists
                     preloadNextVideo(index);
                 } else {
-                    storyLog('📷 Rendering photo', { filename: item.filename });
-                    content.innerHTML = `<img src="/uploads/${item.filename}" style="max-width:100%; max-height:100%; object-fit:contain;">`;
+                    storyLog('📷 Rendering photo', { filename: item.filename, location: locationText });
+                    content.innerHTML = `
+                        <img src="/uploads/${item.filename}" style="max-width:100%; max-height:100%; object-fit:contain;">
+                        ${locationOverlay}
+                    `;
                     // Auto-advance after PHOTO_DURATION
                     if (!storyPaused) {
                         storyTimer = setTimeout(() => nextSlide(), PHOTO_DURATION);
