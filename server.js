@@ -1851,6 +1851,7 @@ app.post('/api/routes/calculate-actual-journey', isAdmin, async (req, res) => {
     let fullGeometry = [];
     let totalDistance = 0;
     let totalDuration = 0;
+    let usedFallback = false; // Track if any batch used fallback
 
     // Process in batches
     for (let batchNum = 0; batchNum < numBatches; batchNum++) {
@@ -1863,7 +1864,7 @@ app.post('/api/routes/calculate-actual-journey', isAdmin, async (req, res) => {
       const coordinates = batch.map(p => [p.lng, p.lat]); // ORS uses [lng, lat]
 
       try {
-        // Call ORS API for directions
+        // Call ORS API for directions with increased radius for remote areas
         const response = await fetch('https://api.openrouteservice.org/v2/directions/driving-car/geojson', {
           method: 'POST',
           headers: {
@@ -1873,13 +1874,36 @@ app.post('/api/routes/calculate-actual-journey', isAdmin, async (req, res) => {
           body: JSON.stringify({
             coordinates: coordinates,
             preference: 'recommended',
-            units: 'm'
+            units: 'm',
+            // Increase search radius to 5km for remote areas (Bhutan, mountain roads)
+            radiuses: coordinates.map(() => 5000)
           })
         });
 
         if (!response.ok) {
           const errorText = await response.text();
-          throw new Error(`ORS API error: ${response.statusText} - ${errorText}`);
+
+          // Try to extract which coordinate failed
+          let errorDetails = '';
+          try {
+            const errorData = JSON.parse(errorText);
+            if (errorData.error && errorData.error.message) {
+              errorDetails = errorData.error.message;
+
+              // Extract coordinate index from error message
+              const coordMatch = errorDetails.match(/coordinate (\d+)/);
+              if (coordMatch) {
+                const coordIndex = parseInt(coordMatch[1]);
+                if (batch[coordIndex]) {
+                  errorDetails += ` (Photo: ${batch[coordIndex].filename})`;
+                }
+              }
+            }
+          } catch (e) {
+            errorDetails = errorText;
+          }
+
+          throw new Error(`ORS API error: ${response.statusText} - ${errorDetails}`);
         }
 
         const data = await response.json();
@@ -1913,25 +1937,66 @@ app.post('/api/routes/calculate-actual-journey', isAdmin, async (req, res) => {
           status: 'error',
           error: batchErr.message
         });
-        throw batchErr;
+
+        // Fallback: use straight-line calculation for this batch
+        usedFallback = true;
+        sendLog(`⚠️ Falling back to straight-line calculation for batch ${batchNum + 1}...`, { status: 'warning' });
+
+        const batchGeometry = batch.map(p => [p.lat, p.lng]);
+        let batchDistance = 0;
+
+        for (let i = 1; i < batch.length; i++) {
+          const p1 = batch[i - 1];
+          const p2 = batch[i];
+          // Haversine distance
+          const R = 6371;
+          const dLat = (p2.lat - p1.lat) * Math.PI / 180;
+          const dLng = (p2.lng - p1.lng) * Math.PI / 180;
+          const a = Math.sin(dLat/2) ** 2 + Math.cos(p1.lat * Math.PI / 180) * Math.cos(p2.lat * Math.PI / 180) * Math.sin(dLng/2) ** 2;
+          batchDistance += R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a)) * 1000;
+        }
+
+        // Merge geometry
+        if (batchNum === 0) {
+          fullGeometry = batchGeometry;
+        } else {
+          fullGeometry = fullGeometry.concat(batchGeometry.slice(1));
+        }
+
+        totalDistance += batchDistance;
+
+        sendLog(`✓ Batch ${batchNum + 1} fallback complete: ${(batchDistance / 1000).toFixed(1)} km (straight-line)`, {
+          batchProgress: `${batchNum + 1}/${numBatches}`
+        });
+
+        // Rate limiting: wait 1 second before next batch
+        if (batchNum < numBatches - 1) {
+          sendLog('⏱️ Waiting 1s before next batch (rate limit)...');
+          await new Promise(resolve => setTimeout(resolve, 1000));
+        }
       }
     }
 
     sendLog(`📏 Total distance: ${(totalDistance / 1000).toFixed(1)} km`);
-    sendLog(`⏱️ Estimated duration: ${Math.round(totalDuration / 3600)} hours`);
+    if (totalDuration > 0) {
+      sendLog(`⏱️ Estimated duration: ${Math.round(totalDuration / 3600)} hours`);
+    }
+
+    // Determine method based on whether fallback was used
+    const method = usedFallback ? 'hybrid (ORS + straight-line)' : 'openrouteservice';
 
     // Save to cache
     db.prepare(`
       INSERT OR REPLACE INTO actual_journey_route (id, geometry, distance_meters, duration_seconds, points, total_photos, method)
-      VALUES (1, ?, ?, ?, ?, ?, 'openrouteservice')
-    `).run(JSON.stringify(fullGeometry), Math.round(totalDistance), Math.round(totalDuration), sampledPhotos.length, photos.length);
+      VALUES (1, ?, ?, ?, ?, ?, ?)
+    `).run(JSON.stringify(fullGeometry), Math.round(totalDistance), Math.round(totalDuration), sampledPhotos.length, photos.length, method);
 
     sendLog('💾 Route saved to cache');
-    sendLog('✅ Route calculation complete!', {
+    sendLog(`✅ Route calculation complete! Method: ${method}`, {
       status: 'complete',
       distance_meters: Math.round(totalDistance),
       duration_seconds: Math.round(totalDuration),
-      method: 'openrouteservice'
+      method: method
     });
 
     // Notify all clients
