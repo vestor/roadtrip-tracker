@@ -10,6 +10,7 @@
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css" />
     <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
     <script src="/socket.io/socket.io.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/canvas-confetti@1.9.2/dist/confetti.browser.min.js"></script>
     <style>
         :root {
             --bg-dark: #0f0f0f;
@@ -825,10 +826,10 @@
         function showApp() {
             document.getElementById('loginView').style.display = 'none';
             document.getElementById('appView').style.display = 'block';
-            
+
             document.getElementById('userName').textContent = currentUser.name;
             document.getElementById('userAvatar').src = currentUser.picture || '';
-            
+
             if (currentUser.role === 'admin') {
                 document.getElementById('adminLink').style.display = 'inline-block';
             }
@@ -838,6 +839,85 @@
             setupTabs();
             setupSocketListeners();
             requestNotificationPermission();
+
+            // Celebrate ride completion!
+            celebrateRideCompletion();
+        }
+
+        function celebrateRideCompletion() {
+            // Fire confetti from multiple angles
+            const duration = 4000;
+            const animationEnd = Date.now() + duration;
+            const defaults = { startVelocity: 30, spread: 360, ticks: 60, zIndex: 99999 };
+
+            function randomInRange(min, max) {
+                return Math.random() * (max - min) + min;
+            }
+
+            const interval = setInterval(function() {
+                const timeLeft = animationEnd - Date.now();
+
+                if (timeLeft <= 0) {
+                    return clearInterval(interval);
+                }
+
+                const particleCount = 50 * (timeLeft / duration);
+
+                // Fire from left
+                confetti(Object.assign({}, defaults, {
+                    particleCount,
+                    origin: { x: randomInRange(0.1, 0.3), y: Math.random() - 0.2 },
+                    colors: ['#ff6b35', '#f7c948', '#22c55e', '#3b82f6', '#a855f7']
+                }));
+
+                // Fire from right
+                confetti(Object.assign({}, defaults, {
+                    particleCount,
+                    origin: { x: randomInRange(0.7, 0.9), y: Math.random() - 0.2 },
+                    colors: ['#ff6b35', '#f7c948', '#22c55e', '#3b82f6', '#a855f7']
+                }));
+            }, 250);
+
+            // Show completion banner
+            showCompletionBanner();
+        }
+
+        function showCompletionBanner() {
+            const banner = document.createElement('div');
+            banner.style.cssText = `
+                position: fixed;
+                top: 50%;
+                left: 50%;
+                transform: translate(-50%, -50%);
+                z-index: 100000;
+                background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+                color: white;
+                padding: 40px 60px;
+                border-radius: 20px;
+                text-align: center;
+                box-shadow: 0 20px 60px rgba(0,0,0,0.5);
+                animation: slideIn 0.5s ease-out;
+            `;
+            banner.innerHTML = `
+                <style>
+                    @keyframes slideIn {
+                        from { transform: translate(-50%, -60%); opacity: 0; }
+                        to { transform: translate(-50%, -50%); opacity: 1; }
+                    }
+                </style>
+                <div style="font-size: 4rem; margin-bottom: 20px;">🏍️ 🏁</div>
+                <h1 style="font-family: 'Bebas Neue', sans-serif; font-size: 3rem; margin: 0 0 10px 0;">RIDE COMPLETED!</h1>
+                <p style="font-size: 1.3rem; margin: 0; opacity: 0.9;">India 🇮🇳 → Bhutan 🇧🇹 → Nepal 🇳🇵</p>
+                <p style="font-size: 1rem; margin-top: 10px; opacity: 0.7;">An epic Himalayan adventure</p>
+            `;
+            document.body.appendChild(banner);
+
+            // Remove banner after 5 seconds
+            setTimeout(() => {
+                banner.style.transition = 'opacity 0.5s ease-out';
+                banner.style.opacity = '0';
+                setTimeout(() => banner.remove(), 500);
+            }, 5000);
         }
 
         function initMap() {
@@ -885,12 +965,8 @@
                 updateStats();
                 loadStory();
 
-                // Check resting status first, then live location
-                if (restingStatus.resting) {
-                    showRestingBanner(restingStatus.location);
-                } else if (liveLocation.lat && liveLocation.lng) {
-                    updateLiveLocation(liveLocation);
-                }
+                // Ride completed - no longer showing live location
+                // Live location tracking disabled after ride completion
             } catch (err) {
                 console.error('Failed to load data:', err);
             }
@@ -988,50 +1064,43 @@
                 }
             });
 
-            // Draw cached route segments
-            cachedRoutes.forEach((route) => {
-                // Check if both stops are completed (leg is completed)
-                const fromStop = stops.find(s => s.order_index === route.from_order);
-                const toStop = stops.find(s => s.order_index === route.to_order);
-                const isCompleted = fromStop?.completed && toStop?.completed;
+            // Draw actual route from photo GPS coordinates
+            const photosWithGPS = photos.filter(p => p.lat && p.lng)
+                .sort((a, b) => new Date(a.uploaded_at) - new Date(b.uploaded_at));
 
-                // Green for completed legs, blue for upcoming legs
-                const color = isCompleted ? '#22c55e' : '#3b82f6';
+            if (photosWithGPS.length > 1) {
+                const routeCoordinates = photosWithGPS.map(p => [p.lat, p.lng]);
 
-                const coordinates = route.geometry.map(coord => [coord[0], coord[1]]);
-
-                L.polyline(coordinates, {
-                    color: color,
-                    weight: 3,
-                    opacity: isCompleted ? 0.5 : 0.7,
-                    dashArray: route.from_city.includes('Bhutan') || route.to_city.includes('Bhutan') ? '8, 8' : null
-                }).addTo(map).bindPopup(`
-                    <b>${isCompleted ? '✅ ' : ''}${route.from_city} → ${route.to_city}</b><br>
-                    Distance: ${(route.distance_meters / 1000).toFixed(1)} km<br>
-                    Duration: ${formatDuration(route.duration_seconds)}
-                `);
-            });
-
-            // Draw live route if active
-            if (liveRoute && liveRoute.active) {
-                const coordinates = liveRoute.geometry.map(coord => [coord[0], coord[1]]);
-
-                L.polyline(coordinates, {
+                // Draw the actual traveled route in green (completed journey)
+                L.polyline(routeCoordinates, {
                     color: '#22c55e',
-                    weight: 4,
-                    opacity: 0.9,
-                    dashArray: '10, 5'
+                    weight: 3,
+                    opacity: 0.7,
+                    smoothFactor: 1
                 }).addTo(map).bindPopup(`
-                    <b style="color:#22c55e">🏍️ Live Route to ${liveRoute.to_city}</b><br>
-                    Remaining: ${(liveRoute.distance_meters / 1000).toFixed(1)} km<br>
-                    ETA: ${formatDuration(liveRoute.duration_seconds)}
+                    <b>🏍️ Completed Journey</b><br>
+                    ${photosWithGPS.length} GPS-tracked locations
                 `);
 
-                showCurrentLegBanner(liveRoute.to_city, liveRoute.distance_meters, liveRoute.duration_seconds);
-            } else {
-                // Hide current leg banner if not active
-                const banner = document.getElementById('currentLegBanner');
-                if (banner) banner.style.display = 'none';
+                // Add direction arrows along the route to show travel direction
+                for (let i = 0; i < photosWithGPS.length - 1; i += Math.floor(photosWithGPS.length / 10) || 1) {
+                    const p1 = photosWithGPS[i];
+                    const p2 = photosWithGPS[i + 1];
+                    const midLat = (p1.lat + p2.lat) / 2;
+                    const midLng = (p1.lng + p2.lng) / 2;
+
+                    // Calculate bearing for arrow direction
+                    const angle = Math.atan2(p2.lng - p1.lng, p2.lat - p1.lat) * 180 / Math.PI;
+
+                    L.marker([midLat, midLng], {
+                        icon: L.divIcon({
+                            className: 'route-arrow',
+                            html: `<div style="font-size:16px;transform:rotate(${angle}deg);">➤</div>`,
+                            iconSize: [16, 16],
+                            iconAnchor: [8, 8]
+                        })
+                    }).addTo(map);
+                }
             }
 
             // Draw stop markers
