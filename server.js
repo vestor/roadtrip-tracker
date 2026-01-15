@@ -167,6 +167,17 @@ db.exec(`
 
   CREATE INDEX IF NOT EXISTS idx_user_analytics_online
     ON user_analytics(user_id, is_online);
+
+  CREATE TABLE IF NOT EXISTS actual_journey_route (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    geometry TEXT NOT NULL,
+    distance_meters INTEGER NOT NULL,
+    duration_seconds INTEGER DEFAULT 0,
+    points INTEGER NOT NULL,
+    total_photos INTEGER NOT NULL,
+    method TEXT NOT NULL,
+    calculated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  );
 `);
 
 // Migrations: Add new columns to existing live_route_progress table
@@ -1718,9 +1729,51 @@ app.delete('/api/routes/:fromStopId/:toStopId', isAdmin, (req, res) => {
   }
 });
 
-// Calculate actual route from photo GPS coordinates
-app.get('/api/routes/actual-journey', isAuthenticated, async (req, res) => {
+// Get cached actual journey route
+app.get('/api/routes/actual-journey', isAuthenticated, (req, res) => {
   try {
+    const cached = db.prepare('SELECT * FROM actual_journey_route WHERE id = 1').get();
+
+    if (!cached) {
+      return res.json({
+        geometry: [],
+        distance_meters: 0,
+        duration_seconds: 0,
+        points: 0,
+        cached: false
+      });
+    }
+
+    res.json({
+      geometry: JSON.parse(cached.geometry),
+      distance_meters: cached.distance_meters,
+      duration_seconds: cached.duration_seconds,
+      points: cached.points,
+      total_photos: cached.total_photos,
+      method: cached.method,
+      calculated_at: cached.calculated_at,
+      cached: true
+    });
+  } catch (err) {
+    console.error('Failed to load cached route:', err);
+    res.status(500).json({ error: 'Failed to load route' });
+  }
+});
+
+// Manual route calculation with batch processing (admin only)
+app.post('/api/routes/calculate-actual-journey', isAdmin, async (req, res) => {
+  // Set up SSE for streaming progress
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
+
+  const sendLog = (message, data = {}) => {
+    res.write(`data: ${JSON.stringify({ log: message, ...data })}\n\n`);
+  };
+
+  try {
+    sendLog('🔍 Starting route calculation...');
+
     // Get all photos with GPS coordinates, sorted by upload time
     const photos = db.prepare(`
       SELECT lat, lng, uploaded_at, filename
@@ -1729,12 +1782,18 @@ app.get('/api/routes/actual-journey', isAuthenticated, async (req, res) => {
       ORDER BY uploaded_at ASC
     `).all();
 
+    sendLog(`📸 Found ${photos.length} photos with GPS coordinates`);
+
     if (photos.length < 2) {
-      return res.json({ geometry: [], distance_meters: 0, duration_seconds: 0, points: 0 });
+      sendLog('❌ Not enough photos with GPS data', { status: 'error' });
+      res.end();
+      return;
     }
 
     const apiKey = process.env.OPENROUTE_API_KEY;
     if (!apiKey) {
+      sendLog('⚠️ No OpenRouteService API key found, using straight-line calculation');
+
       // Fallback to simple line if no API key
       const simpleRoute = photos.map(p => [p.lat, p.lng]);
       let totalDistance = 0;
@@ -1748,75 +1807,142 @@ app.get('/api/routes/actual-journey', isAuthenticated, async (req, res) => {
         const a = Math.sin(dLat/2) ** 2 + Math.cos(p1.lat * Math.PI / 180) * Math.cos(p2.lat * Math.PI / 180) * Math.sin(dLng/2) ** 2;
         totalDistance += R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a)) * 1000;
       }
-      return res.json({
-        geometry: simpleRoute,
+
+      sendLog(`📏 Calculated distance: ${(totalDistance / 1000).toFixed(1)} km (straight-line)`);
+
+      // Save to cache
+      db.prepare(`
+        INSERT OR REPLACE INTO actual_journey_route (id, geometry, distance_meters, duration_seconds, points, total_photos, method)
+        VALUES (1, ?, ?, 0, ?, ?, 'straight_line')
+      `).run(JSON.stringify(simpleRoute), Math.round(totalDistance), photos.length, photos.length);
+
+      sendLog('✅ Route calculation complete!', {
+        status: 'complete',
         distance_meters: Math.round(totalDistance),
-        duration_seconds: 0,
-        points: photos.length,
         method: 'straight_line'
       });
+      res.end();
+      return;
     }
 
-    const ors = new ORSClient(apiKey);
-
     // ORS API has a limit on waypoints (usually 50 for free tier)
-    // Sample photos to stay within limit
+    // We'll process in batches to stay within limits
     const maxWaypoints = 50;
-    let sampledPhotos = photos;
+    const batchSize = 45; // Leave some buffer
 
+    sendLog(`🔧 API limit: ${maxWaypoints} waypoints per request`);
+
+    // Sample photos to stay within limit
+    let sampledPhotos = photos;
     if (photos.length > maxWaypoints) {
-      // Sample evenly across the journey
       const step = Math.floor(photos.length / maxWaypoints);
       sampledPhotos = photos.filter((_, index) => index % step === 0);
       // Always include first and last
       if (sampledPhotos[sampledPhotos.length - 1] !== photos[photos.length - 1]) {
         sampledPhotos.push(photos[photos.length - 1]);
       }
+      sendLog(`📊 Sampled ${sampledPhotos.length} waypoints from ${photos.length} photos`);
     }
 
-    console.log(`Calculating route from ${sampledPhotos.length} GPS points (sampled from ${photos.length})`);
+    // Calculate how many API calls we need
+    const numBatches = Math.ceil(sampledPhotos.length / batchSize);
+    sendLog(`🔄 Processing in ${numBatches} batch${numBatches > 1 ? 'es' : ''}...`);
 
-    // Build coordinates array for ORS
-    const coordinates = sampledPhotos.map(p => [p.lng, p.lat]); // ORS uses [lng, lat]
+    let fullGeometry = [];
+    let totalDistance = 0;
+    let totalDuration = 0;
 
-    // Call ORS API for directions
-    const response = await fetch('https://api.openrouteservice.org/v2/directions/driving-car/geojson', {
-      method: 'POST',
-      headers: {
-        'Authorization': apiKey,
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({
-        coordinates: coordinates,
-        preference: 'recommended',
-        units: 'm'
-      })
-    });
+    // Process in batches
+    for (let batchNum = 0; batchNum < numBatches; batchNum++) {
+      const start = batchNum * batchSize;
+      const end = Math.min(start + batchSize + 1, sampledPhotos.length); // +1 for overlap
+      const batch = sampledPhotos.slice(start, end);
 
-    if (!response.ok) {
-      throw new Error(`ORS API error: ${response.statusText}`);
+      sendLog(`📦 Batch ${batchNum + 1}/${numBatches}: Processing ${batch.length} waypoints (photos ${start + 1}-${end})...`);
+
+      const coordinates = batch.map(p => [p.lng, p.lat]); // ORS uses [lng, lat]
+
+      try {
+        // Call ORS API for directions
+        const response = await fetch('https://api.openrouteservice.org/v2/directions/driving-car/geojson', {
+          method: 'POST',
+          headers: {
+            'Authorization': apiKey,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            coordinates: coordinates,
+            preference: 'recommended',
+            units: 'm'
+          })
+        });
+
+        if (!response.ok) {
+          const errorText = await response.text();
+          throw new Error(`ORS API error: ${response.statusText} - ${errorText}`);
+        }
+
+        const data = await response.json();
+        const route = data.features[0];
+        const geometry = route.geometry.coordinates.map(coord => [coord[1], coord[0]]); // Convert back to [lat, lng]
+        const distance = route.properties.segments.reduce((sum, seg) => sum + seg.distance, 0);
+        const duration = route.properties.segments.reduce((sum, seg) => sum + seg.duration, 0);
+
+        // Merge geometry (skip first point of subsequent batches to avoid duplicates)
+        if (batchNum === 0) {
+          fullGeometry = geometry;
+        } else {
+          fullGeometry = fullGeometry.concat(geometry.slice(1));
+        }
+
+        totalDistance += distance;
+        totalDuration += duration;
+
+        sendLog(`✓ Batch ${batchNum + 1} complete: ${(distance / 1000).toFixed(1)} km`, {
+          batchProgress: `${batchNum + 1}/${numBatches}`
+        });
+
+        // Rate limiting: wait 1 second between API calls
+        if (batchNum < numBatches - 1) {
+          sendLog('⏱️ Waiting 1s before next batch (rate limit)...');
+          await new Promise(resolve => setTimeout(resolve, 1000));
+        }
+
+      } catch (batchErr) {
+        sendLog(`❌ Batch ${batchNum + 1} failed: ${batchErr.message}`, {
+          status: 'error',
+          error: batchErr.message
+        });
+        throw batchErr;
+      }
     }
 
-    const data = await response.json();
-    const route = data.features[0];
-    const geometry = route.geometry.coordinates.map(coord => [coord[1], coord[0]]); // Convert back to [lat, lng]
-    const distance_meters = route.properties.segments.reduce((sum, seg) => sum + seg.distance, 0);
-    const duration_seconds = route.properties.segments.reduce((sum, seg) => sum + seg.duration, 0);
+    sendLog(`📏 Total distance: ${(totalDistance / 1000).toFixed(1)} km`);
+    sendLog(`⏱️ Estimated duration: ${Math.round(totalDuration / 3600)} hours`);
 
-    console.log(`✓ Route calculated: ${(distance_meters / 1000).toFixed(1)} km`);
+    // Save to cache
+    db.prepare(`
+      INSERT OR REPLACE INTO actual_journey_route (id, geometry, distance_meters, duration_seconds, points, total_photos, method)
+      VALUES (1, ?, ?, ?, ?, ?, 'openrouteservice')
+    `).run(JSON.stringify(fullGeometry), Math.round(totalDistance), Math.round(totalDuration), sampledPhotos.length, photos.length);
 
-    res.json({
-      geometry,
-      distance_meters: Math.round(distance_meters),
-      duration_seconds: Math.round(duration_seconds),
-      points: sampledPhotos.length,
-      total_photos: photos.length,
+    sendLog('💾 Route saved to cache');
+    sendLog('✅ Route calculation complete!', {
+      status: 'complete',
+      distance_meters: Math.round(totalDistance),
+      duration_seconds: Math.round(totalDuration),
       method: 'openrouteservice'
     });
 
+    // Notify all clients
+    io.emit('routes_updated');
+
+    res.end();
+
   } catch (err) {
     console.error('Failed to calculate actual journey route:', err);
-    res.status(500).json({ error: err.message });
+    sendLog(`❌ Error: ${err.message}`, { status: 'error', error: err.message });
+    res.end();
   }
 });
 
