@@ -999,6 +999,7 @@
                 const restingStatus = await restingRes.json();
 
                 await loadRoutes();
+                // Load actual journey route from cache if exists
                 await loadActualJourneyRoute();
 
                 renderItinerary();
