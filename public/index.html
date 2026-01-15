@@ -787,7 +787,7 @@
     <script>
         const socket = io();
         let map, liveMarker, stops = [], photos = [], currentUser = null;
-        let cachedRoutes = [], liveRoute = null;
+        let cachedRoutes = [], liveRoute = null, actualJourneyRoute = null;
         const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
         const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
@@ -845,6 +845,14 @@
         }
 
         function celebrateRideCompletion() {
+            // Check if user has already seen the celebration
+            if (localStorage.getItem('ride_completion_celebrated')) {
+                return;
+            }
+
+            // Mark as celebrated
+            localStorage.setItem('ride_completion_celebrated', 'true');
+
             // Fire confetti from multiple angles
             const duration = 4000;
             const animationEnd = Date.now() + duration;
@@ -878,11 +886,32 @@
                 }));
             }, 250);
 
-            // Show completion banner
+            // Show completion banner (will fetch stats and display)
             showCompletionBanner();
         }
 
-        function showCompletionBanner() {
+        async function showCompletionBanner() {
+            // Calculate total km from actual route
+            let totalKm = 0;
+
+            // Use actual journey route from ORS if available
+            if (actualJourneyRoute && actualJourneyRoute.distance_meters) {
+                totalKm = actualJourneyRoute.distance_meters / 1000;
+            } else {
+                // Fallback: calculate from GPS points
+                const photosWithGPS = photos.filter(p => p.lat && p.lng)
+                    .sort((a, b) => new Date(a.uploaded_at) - new Date(b.uploaded_at));
+
+                if (photosWithGPS.length > 1) {
+                    // Sum up distances between consecutive GPS points
+                    for (let i = 1; i < photosWithGPS.length; i++) {
+                        const p1 = photosWithGPS[i - 1];
+                        const p2 = photosWithGPS[i];
+                        totalKm += haversineDistance(p1.lat, p1.lng, p2.lat, p2.lng);
+                    }
+                }
+            }
+
             const banner = document.createElement('div');
             banner.style.cssText = `
                 position: fixed;
@@ -908,16 +937,17 @@
                 <div style="font-size: 4rem; margin-bottom: 20px;">🏍️ 🏁</div>
                 <h1 style="font-family: 'Bebas Neue', sans-serif; font-size: 3rem; margin: 0 0 10px 0;">RIDE COMPLETED!</h1>
                 <p style="font-size: 1.3rem; margin: 0; opacity: 0.9;">India 🇮🇳 → Bhutan 🇧🇹 → Nepal 🇳🇵</p>
+                <p style="font-size: 1.1rem; margin-top: 15px; font-weight: 600;">${Math.round(totalKm).toLocaleString()} km across 3 countries</p>
                 <p style="font-size: 1rem; margin-top: 10px; opacity: 0.7;">An epic Himalayan adventure</p>
             `;
             document.body.appendChild(banner);
 
-            // Remove banner after 5 seconds
+            // Remove banner after 6 seconds
             setTimeout(() => {
                 banner.style.transition = 'opacity 0.5s ease-out';
                 banner.style.opacity = '0';
                 setTimeout(() => banner.remove(), 500);
-            }, 5000);
+            }, 6000);
         }
 
         function initMap() {
@@ -943,6 +973,17 @@
             }
         }
 
+        async function loadActualJourneyRoute() {
+            try {
+                const res = await fetch('/api/routes/actual-journey');
+                actualJourneyRoute = await res.json();
+                console.log('Actual journey route loaded:', actualJourneyRoute);
+            } catch (err) {
+                console.error('Failed to load actual journey route:', err);
+                actualJourneyRoute = null;
+            }
+        }
+
         async function loadData() {
             try {
                 const [stopsRes, photosRes, locRes, restingRes] = await Promise.all([
@@ -958,6 +999,7 @@
                 const restingStatus = await restingRes.json();
 
                 await loadRoutes();
+                await loadActualJourneyRoute();
 
                 renderItinerary();
                 renderPhotos();
@@ -1064,33 +1106,33 @@
                 }
             });
 
-            // Draw actual route from photo GPS coordinates
-            const photosWithGPS = photos.filter(p => p.lat && p.lng)
-                .sort((a, b) => new Date(a.uploaded_at) - new Date(b.uploaded_at));
-
-            if (photosWithGPS.length > 1) {
-                const routeCoordinates = photosWithGPS.map(p => [p.lat, p.lng]);
+            // Draw actual route from OpenRouteService calculation
+            if (actualJourneyRoute && actualJourneyRoute.geometry && actualJourneyRoute.geometry.length > 1) {
+                const routeCoordinates = actualJourneyRoute.geometry;
 
                 // Draw the actual traveled route in green (completed journey)
                 L.polyline(routeCoordinates, {
                     color: '#22c55e',
-                    weight: 3,
-                    opacity: 0.7,
+                    weight: 4,
+                    opacity: 0.8,
                     smoothFactor: 1
                 }).addTo(map).bindPopup(`
                     <b>🏍️ Completed Journey</b><br>
-                    ${photosWithGPS.length} GPS-tracked locations
+                    ${(actualJourneyRoute.distance_meters / 1000).toFixed(1)} km<br>
+                    ${actualJourneyRoute.total_photos || actualJourneyRoute.points} GPS-tracked locations<br>
+                    <small>Route calculated via ${actualJourneyRoute.method === 'openrouteservice' ? 'OpenRouteService' : 'GPS coordinates'}</small>
                 `);
 
                 // Add direction arrows along the route to show travel direction
-                for (let i = 0; i < photosWithGPS.length - 1; i += Math.floor(photosWithGPS.length / 10) || 1) {
-                    const p1 = photosWithGPS[i];
-                    const p2 = photosWithGPS[i + 1];
-                    const midLat = (p1.lat + p2.lat) / 2;
-                    const midLng = (p1.lng + p2.lng) / 2;
+                const step = Math.floor(routeCoordinates.length / 15) || 1;
+                for (let i = 0; i < routeCoordinates.length - step; i += step) {
+                    const p1 = routeCoordinates[i];
+                    const p2 = routeCoordinates[i + step];
+                    const midLat = (p1[0] + p2[0]) / 2;
+                    const midLng = (p1[1] + p2[1]) / 2;
 
                     // Calculate bearing for arrow direction
-                    const angle = Math.atan2(p2.lng - p1.lng, p2.lat - p1.lat) * 180 / Math.PI;
+                    const angle = Math.atan2(p2[1] - p1[1], p2[0] - p1[0]) * 180 / Math.PI;
 
                     L.marker([midLat, midLng], {
                         icon: L.divIcon({
@@ -1145,7 +1187,10 @@
         function updateStats() {
             let totalKm = 0;
 
-            if (cachedRoutes.length > 0) {
+            // Use actual journey route if available
+            if (actualJourneyRoute && actualJourneyRoute.distance_meters) {
+                totalKm = actualJourneyRoute.distance_meters / 1000;
+            } else if (cachedRoutes.length > 0) {
                 totalKm = cachedRoutes.reduce((sum, route) => sum + route.distance_meters, 0) / 1000;
             } else {
                 // Fallback to straight-line distances

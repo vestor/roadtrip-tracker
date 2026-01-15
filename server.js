@@ -1718,6 +1718,108 @@ app.delete('/api/routes/:fromStopId/:toStopId', isAdmin, (req, res) => {
   }
 });
 
+// Calculate actual route from photo GPS coordinates
+app.get('/api/routes/actual-journey', isAuthenticated, async (req, res) => {
+  try {
+    // Get all photos with GPS coordinates, sorted by upload time
+    const photos = db.prepare(`
+      SELECT lat, lng, uploaded_at, filename
+      FROM photos
+      WHERE lat IS NOT NULL AND lng IS NOT NULL
+      ORDER BY uploaded_at ASC
+    `).all();
+
+    if (photos.length < 2) {
+      return res.json({ geometry: [], distance_meters: 0, duration_seconds: 0, points: 0 });
+    }
+
+    const apiKey = process.env.OPENROUTE_API_KEY;
+    if (!apiKey) {
+      // Fallback to simple line if no API key
+      const simpleRoute = photos.map(p => [p.lat, p.lng]);
+      let totalDistance = 0;
+      for (let i = 1; i < photos.length; i++) {
+        const p1 = photos[i - 1];
+        const p2 = photos[i];
+        // Haversine distance
+        const R = 6371;
+        const dLat = (p2.lat - p1.lat) * Math.PI / 180;
+        const dLng = (p2.lng - p1.lng) * Math.PI / 180;
+        const a = Math.sin(dLat/2) ** 2 + Math.cos(p1.lat * Math.PI / 180) * Math.cos(p2.lat * Math.PI / 180) * Math.sin(dLng/2) ** 2;
+        totalDistance += R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a)) * 1000;
+      }
+      return res.json({
+        geometry: simpleRoute,
+        distance_meters: Math.round(totalDistance),
+        duration_seconds: 0,
+        points: photos.length,
+        method: 'straight_line'
+      });
+    }
+
+    const ors = new ORSClient(apiKey);
+
+    // ORS API has a limit on waypoints (usually 50 for free tier)
+    // Sample photos to stay within limit
+    const maxWaypoints = 50;
+    let sampledPhotos = photos;
+
+    if (photos.length > maxWaypoints) {
+      // Sample evenly across the journey
+      const step = Math.floor(photos.length / maxWaypoints);
+      sampledPhotos = photos.filter((_, index) => index % step === 0);
+      // Always include first and last
+      if (sampledPhotos[sampledPhotos.length - 1] !== photos[photos.length - 1]) {
+        sampledPhotos.push(photos[photos.length - 1]);
+      }
+    }
+
+    console.log(`Calculating route from ${sampledPhotos.length} GPS points (sampled from ${photos.length})`);
+
+    // Build coordinates array for ORS
+    const coordinates = sampledPhotos.map(p => [p.lng, p.lat]); // ORS uses [lng, lat]
+
+    // Call ORS API for directions
+    const response = await fetch('https://api.openrouteservice.org/v2/directions/driving-car/geojson', {
+      method: 'POST',
+      headers: {
+        'Authorization': apiKey,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        coordinates: coordinates,
+        preference: 'recommended',
+        units: 'm'
+      })
+    });
+
+    if (!response.ok) {
+      throw new Error(`ORS API error: ${response.statusText}`);
+    }
+
+    const data = await response.json();
+    const route = data.features[0];
+    const geometry = route.geometry.coordinates.map(coord => [coord[1], coord[0]]); // Convert back to [lat, lng]
+    const distance_meters = route.properties.segments.reduce((sum, seg) => sum + seg.distance, 0);
+    const duration_seconds = route.properties.segments.reduce((sum, seg) => sum + seg.duration, 0);
+
+    console.log(`✓ Route calculated: ${(distance_meters / 1000).toFixed(1)} km`);
+
+    res.json({
+      geometry,
+      distance_meters: Math.round(distance_meters),
+      duration_seconds: Math.round(duration_seconds),
+      points: sampledPhotos.length,
+      total_photos: photos.length,
+      method: 'openrouteservice'
+    });
+
+  } catch (err) {
+    console.error('Failed to calculate actual journey route:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // ============================================
 // SOCKET.IO
 // ============================================
